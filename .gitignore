@@ -1,0 +1,12 @@
+__pycache__/
+
+*.log
+logs/
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+.env
