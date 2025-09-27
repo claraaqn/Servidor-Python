@@ -1,0 +1,360 @@
+import datetime
+import socket
+import threading
+import json
+import logging
+from src.config.config import Config
+from src.database.database import Database
+from src.database.queries import Queries
+from src.handlers.auth_handler import AuthHandler
+from src.handlers.message_handler import MessageHandler
+from src.handlers.utils import create_response, DateTimeEncoder
+
+logger = logging.getLogger(__name__)
+
+class TCPClientHandler:
+    def __init__(self, client_socket, address):
+        self.client_socket = client_socket
+        self.address = address
+        self.user_id = None
+        self.username = None
+        self.authenticated = False
+        self.running = True
+        
+
+    def process_message(self, raw_message, user_id, username):
+        """
+        Processa mensagens recebidas do cliente TCP.
+        O `raw_message` deve ser uma string JSON.
+        """
+        try:
+            data = json.loads(raw_message)
+            action = data.get('action')
+
+            if action == 'register':
+                return self.handle_register(data)
+
+            elif action == 'login':
+                return self.handle_login(data)
+
+            elif action == 'logout':
+                return self.handle_logout(data)
+
+            elif action == 'send_message':
+                return self.handle_send_message(data)
+
+            elif action == 'get_contacts':
+                return self.handle_get_contacts()
+
+            elif action == 'get_undelivered_messages':
+                return self.handle_get_undelivered_messages()
+
+            elif action == 'get_conversation_history':
+                return self.handle_get_conversation_history(data)
+
+            elif action == 'send_friend_request':
+                return self.handle_send_friend_request(data, user_id)
+
+            elif action == 'get_friend_requests':
+                return self.handle_get_friend_requests(user_id)
+
+            elif action == 'respond_friend_request':
+                return self.handle_respond_friend_request(data, user_id)
+
+            elif action == 'get_friends_list':
+                return self.handle_get_friends_list(user_id)
+
+            elif action in ['typing_start', 'typing_stop']:
+                typing = action == 'typing_start'
+                return self.handle_typing(data, typing)
+
+            else:
+                return create_response(False, f"Ação '{action}' não reconhecida")
+
+        except json.JSONDecodeError:
+            return create_response(False, "JSON inválido")
+        except Exception as e:
+            logger.error(f"Erro ao processar mensagem: {e}")
+            return create_response(False, f"Erro interno: {str(e)}")
+
+    def handle_client(self):
+        buffer = ""
+        user_id = None
+        username = None
+        try:
+            logger.info(f"🔌 Nova conexão TCP de {self.address}")
+
+            while self.running:
+                data = self.client_socket.recv(4096)
+                if not data:
+                    break
+
+                buffer += data.decode('utf-8')
+
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        response = self.process_message(line, user_id, username)
+                        self.send_response(response)
+                        
+                        resp_data = json.loads(line)
+                        
+                        if resp_data.get('action') == 'login' and response.get('success'):
+                            user_id = response.get('data', {}).get('user_id')
+                            username = resp_data.get('username')
+                            logger.info(f"👤 Usuário {username} (ID: {user_id}) autenticado via TCP")
+                    except json.JSONDecodeError:
+                        error_response = create_response(False, "JSON inválido")
+                        self.send_response(error_response)
+                    except Exception as e:
+                        logger.error(f"Erro ao processar mensagem: {e}")
+                        error_response = create_response(False, f"Erro interno: {str(e)}")
+                        self.send_response(error_response)
+
+        except Exception as e:
+            logger.error(f"Erro na conexão com {self.address}: {e}")
+        finally:
+            self.cleanup()
+
+    def handle_register(self, data):
+        username = data.get('username')
+        password = data.get('password')
+        
+        success, message, user_id = AuthHandler.register_user(username, password)
+        if success:
+            return create_response(True, message, {'user_id': user_id})
+        else:
+            return create_response(False, message)
+    
+    def handle_login(self, data):
+        username = data.get('username')
+        password = data.get('password')
+        
+        success, message, user_id = AuthHandler.authenticate_user(username, password)
+        if success:
+            self.user_id = user_id
+            self.username = username
+            self.authenticated = True
+            
+            connection = Database.get_connection()
+            cursor = connection.cursor()
+            cursor.execute(Queries.UPDATE_USER_STATUS, (True, None, self.user_id))
+            connection.commit()
+            
+            return {
+                'action': 'login_response',
+                'success': True,
+                'message': message,
+                'data': {'user_id': user_id}
+            }
+        else:
+            return {
+                'action': 'login_response',
+                'success': False,
+                'message': message
+            }
+    
+    def handle_send_message(self, data):
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        recipient = data.get('recipient')
+        message_text = data.get('message')
+        
+        success, message = MessageHandler.send_message(
+            self.user_id, recipient, message_text
+        )
+        return create_response(success, message)
+    
+    def handle_get_contacts(self):
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        contacts = MessageHandler.get_contacts(self.user_id)
+        return create_response(True, "Lista de contatos", contacts)
+    
+    def handle_typing(self, data, typing):
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        recipient = data.get('recipient')
+        # Implementar lógica de typing indicator
+        return create_response(True, "Typing indicator atualizado")
+    
+    def send_response(self, response):
+        """Envia resposta para o cliente"""
+        try:
+            response_json = json.dumps(response, cls=DateTimeEncoder) + '\n'
+            self.client_socket.send(response_json.encode('utf-8'))
+        except Exception as e:
+            logger.error(f"Erro ao enviar resposta: {e}")
+    
+    def cleanup(self):
+        """Limpeza quando cliente desconecta"""
+        if self.authenticated and self.user_id:
+            # Atualiza status para offline
+            try:
+                from src.database.database import Database
+                from src.database.queries import Queries
+                
+                connection = Database.get_connection()
+                cursor = connection.cursor()
+                cursor.execute(Queries.UPDATE_USER_STATUS, (False, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.user_id))
+                connection.commit()
+            except Exception as e:
+                logger.error(f"Erro ao atualizar status: {e}")
+        
+        self.client_socket.close()
+        logger.info(f"🔌 Cliente {self.address} desconectado")
+
+    def handle_logout(self, data):
+        """Handle user logout"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        success, message = AuthHandler.logout_user(self.user_id)
+        if success:
+            self.authenticated = False
+            self.user_id = None
+            self.username = None
+        return create_response(success, message)
+
+    def handle_get_undelivered_messages(self):
+        """Handle getting undelivered messages"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        messages = MessageHandler.get_undelivered_messages(self.user_id)
+        return create_response(True, "Mensagens não entregues", messages)
+
+    def handle_get_conversation_history(self, data):
+        """Handle getting conversation history"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        other_user_id = data.get('other_user_id')
+        limit = data.get('limit', 50)
+        
+        messages = MessageHandler.get_conversation_history(self.user_id, other_user_id, limit)
+        return create_response(True, "Histórico de conversa", messages)
+
+    def handle_send_friend_request(self, data, user_id):
+        """Handle sending friend request"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        receiver_username = data.get('receiver_username')
+        
+        if not receiver_username:
+            return create_response(False, "receiver_username é obrigatório")
+        
+        success, message = MessageHandler.send_friend_request(user_id, receiver_username)
+        return {
+            'action': 'send_friend_request_response',
+            'success': success,
+            'message': message
+        }
+
+    def handle_get_friend_requests(self, user_id):
+        """Handle getting friend requests"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        requests = MessageHandler.get_friend_requests(user_id)
+        
+        return {
+            'action': 'get_friend_requests_response',
+            'success': True,
+            'message': "Solicitações de amizade",
+            'data': requests
+        }
+
+    def handle_respond_friend_request(self, data, user_id):
+        # inicializa logo
+        request_id = data.get('request_id')
+        reply_status = data.get('response')  # 'accepted' or 'rejected'
+
+        if not user_id:
+            return create_response(False, "Usuário não autenticado")
+
+        if not request_id or not reply_status:
+            return create_response(False, "request_id e response são obrigatórios")
+
+        try:
+            success, message = MessageHandler.respond_friend_request(request_id, reply_status)
+            return {
+                'action': 'respond_friend_request_response',
+                'success': success,
+                'message': message
+            }
+        except Exception as e:
+            # aqui não use reply_status, use só request_id ou str(e)
+            return {
+                'action': 'respond_friend_request_response',
+                'success': False,
+                'message': f"Erro ao processar solicitação: {e}"
+            }
+
+    def handle_get_friends_list(self, user_id):
+        """Handle getting friends list"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        friends = MessageHandler.get_friends_list(user_id)
+        
+        return {
+            'action': 'get_friends_list_response',
+            'success': True,
+            'message': "Lista de amigos",
+            'data': friends
+        }
+
+
+class TCPServer:
+    def __init__(self):
+        self.host = Config.TCP_HOST
+        self.port = Config.TCP_PORT
+        self.socket = None
+        self.running = False
+        self.client_threads = []
+    
+    def start(self):
+        """Inicia o servidor TCP"""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.socket.bind((self.host, self.port))
+            self.socket.listen(5)
+            self.running = True
+            
+            logger.info(f"🐍 Servidor TCP ouvindo em {self.host}:{self.port}")
+            
+            while self.running:
+                try:
+                    client_socket, address = self.socket.accept()
+                    client_handler = TCPClientHandler(client_socket, address)
+                    
+                    client_thread = threading.Thread(
+                        target=client_handler.handle_client, 
+                        daemon=True
+                    )
+                    client_thread.start()
+                    self.client_threads.append(client_thread)
+                    
+                except Exception as e:
+                    if self.running:
+                        logger.error(f"Erro ao aceitar conexão: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Erro no servidor TCP: {e}")
+    
+    def stop(self):
+        """Para o servidor TCP"""
+        self.running = False
+        if self.socket:
+            self.socket.close()
+        logger.info("🛑 Servidor TCP parado")
