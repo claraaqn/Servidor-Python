@@ -1,86 +1,104 @@
 class Queries:
-    # Users - REGISTRO DE USUÁRIO
-    CREATE_USER = """
-        INSERT INTO users (username, password) 
-        VALUES (%s, %s)
-    """
+    # Queries de Usuário
+    CHECK_USER_EXISTS = "SELECT id FROM users WHERE username = %s"
+    CREATE_USER = "INSERT INTO users (username, password) VALUES (%s, %s)"
+    GET_USER = "SELECT id, username, password, updated_at FROM users WHERE username = %s AND password = %s"
+    GET_USER_ID = "SELECT id FROM users WHERE username = %s"
+    GET_ALL_USERS = "SELECT id, username, created_at, updated_at FROM users WHERE id != %s"
     
-    CHECK_USER_EXISTS = """
-        SELECT id FROM users WHERE username = %s
-    """
-    
-    GET_USER = """
-        SELECT id, username, password, created_at 
-        FROM users 
-        WHERE username = %s
-    """
-    
-    GET_USER_BY_ID = """
-        SELECT id, username, password, created_at 
-        FROM users 
-        WHERE id = %s
-    """
-    
-    GET_ALL_USERS = """
-        SELECT id, username, created_at 
-        FROM users 
-        ORDER BY username
-    """
-    
-    # User Status - AGORA com user_id
-    CREATE_USER_STATUS = """
-        INSERT INTO user_status (user_id, is_online, last_seen) 
-        VALUES (%s, %s, %s)
-    """
-    
-    UPDATE_USER_STATUS = """
-        INSERT INTO user_status (user_id, is_online, last_seen) 
-        VALUES (%s, %s, %s) 
-        ON DUPLICATE KEY UPDATE 
-        is_online = VALUES(is_online), 
-        last_seen = VALUES(last_seen)
-    """
-    
-    GET_USER_STATUS = """
-        SELECT us.user_id, u.username, us.is_online, us.last_seen 
-        FROM user_status us
-        JOIN users u ON us.user_id = u.id
-        WHERE u.username = %s
-    """
-    
-    GET_USER_STATUS_BY_ID = """
-        SELECT us.user_id, u.username, us.is_online, us.last_seen 
-        FROM user_status us
-        JOIN users u ON us.user_id = u.id
-        WHERE us.user_id = %s
-    """
-    
-    GET_ALL_ONLINE_USERS = """
+    # Queries de Status do Usuário
+    CREATE_USER_STATUS = "INSERT INTO user_status (user_id, is_online) VALUES (%s, %s)"
+    UPDATE_USER_STATUS = "UPDATE user_status SET is_online=%s, last_seen=%s WHERE user_id=%s"
+
+    CHECK_USER_ONLINE = "SELECT is_online FROM user_status WHERE user_id = %s"
+    GET_ONLINE_USERS = """
         SELECT u.id, u.username 
-        FROM user_status us
-        JOIN users u ON us.user_id = u.id
+        FROM users u 
+        JOIN user_status us ON u.id = us.user_id 
         WHERE us.is_online = TRUE
     """
     
-    # Messages (atualizada com user_id)
-    SAVE_MESSAGE = """
-        INSERT INTO messages (sender_id, receiver_id, content, timestamp) 
-        VALUES (%s, %s, %s, %s)
+    # Queries de Mensagens
+    INSERT_MESSAGE = """
+        INSERT INTO messages (sender_id, receiver_id, content) 
+        VALUES (%s, %s, %s)
     """
     
-    GET_UNDELIVERED_MESSAGES = """
-        SELECT m.id, u_sender.username as sender, u_receiver.username as receiver, 
-               m.content, m.timestamp 
+    GET_CONVERSATION_HISTORY = """
+        SELECT m.id, m.sender_id, m.receiver_id, m.content, m.timestamp, m.delivered,
+               u1.username as sender_username, u2.username as receiver_username
         FROM messages m
-        JOIN users u_sender ON m.sender_id = u_sender.id
-        JOIN users u_receiver ON m.receiver_id = u_receiver.id
-        WHERE u_receiver.username = %s AND m.delivered = FALSE 
-        ORDER BY m.timestamp
+        JOIN users u1 ON m.sender_id = u1.id
+        JOIN users u2 ON m.receiver_id = u2.id
+        WHERE (m.sender_id = %s AND m.receiver_id = %s) 
+           OR (m.sender_id = %s AND m.receiver_id = %s)
+        ORDER BY m.timestamp DESC
+        LIMIT %s
     """
     
-    MARK_MESSAGES_DELIVERED = """
-        UPDATE messages m
-        JOIN users u ON m.receiver_id = u.id
-        SET m.delivered = TRUE 
-        WHERE u.username = %s AND m.delivered = FALSE
+    # Queries para mensagens pendentes (usando a coluna 'delivered')
+    GET_UNDELIVERED_MESSAGES = """
+        SELECT m.id, m.sender_id, m.receiver_id, m.content, m.timestamp,
+               u.username as sender_username
+        FROM messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.receiver_id = %s AND m.delivered = FALSE
+        ORDER BY m.timestamp ASC
+    """
+    
+    MARK_MESSAGES_DELIVERED = "UPDATE messages SET delivered = TRUE WHERE receiver_id = %s AND delivered = FALSE"
+    
+    # Queries de Contatos (todos os usuários)
+    GET_ALL_CONTACTS = """
+        SELECT u.id, u.username, us.is_online, us.last_seen
+        FROM users u
+        LEFT JOIN user_status us ON u.id = us.user_id
+        WHERE u.id != %s
+        ORDER BY us.is_online DESC, u.username ASC
+    """
+    
+    #! Queries de Amizades
+    CREATE_FRIEND_REQUEST = """
+        INSERT INTO friend_requests (sender_id, receiver_id, status) 
+        VALUES (%s, %s, 'pending')
+    """
+
+    GET_FRIEND_REQUESTS = """
+        SELECT 
+            fr.id,
+            fr.sender_id,
+            u.username as sender_username,
+            fr.status,
+            fr.created_at
+        FROM friend_requests fr
+        JOIN users u ON fr.sender_id = u.id
+        WHERE fr.receiver_id = %s AND fr.status = 'pending'
+    """
+
+    UPDATE_FRIEND_STATUS = """
+        UPDATE friend_requests 
+        SET status = %s
+        WHERE id = %s
+    """
+
+    GET_FRIENDS_LIST = """
+        SELECT 
+            u.id,
+            u.username,
+            fr.created_at,
+            us.is_online,
+            us.last_seen
+        FROM friend_requests fr
+        JOIN users u ON (
+            (fr.sender_id = %s AND fr.receiver_id = u.id) OR 
+            (fr.sender_id = u.id AND fr.receiver_id = %s)
+        )
+        JOIN user_status us ON u.id = us.user_id
+        WHERE fr.status = 'accepted'
+        ORDER BY u.username
+    """
+    CHECK_EXISTING_FRIENDSHIP = """
+        SELECT id, status 
+        FROM friend_requests 
+        WHERE (sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)
     """
