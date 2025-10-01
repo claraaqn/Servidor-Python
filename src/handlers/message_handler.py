@@ -273,3 +273,5 @@ class MessageHandler:
         except Exception as e:
             logger.error(f"Erro inesperado ao obter lista de amigos: {e}")
             return []
+        
+        

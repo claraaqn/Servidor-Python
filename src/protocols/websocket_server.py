@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import websockets
 import json
 import logging
@@ -8,12 +9,13 @@ from src.database.queries import Queries
 from src.handlers.auth_handler import AuthHandler
 from src.handlers.message_handler import MessageHandler
 from src.handlers.utils import create_response, DateTimeEncoder
+from src.protocols.connections import tcp_connections, websocket_connections
 import traceback
 
 logger = logging.getLogger(__name__)
+websocket_loop = None 
 
 # Dicionário para manter conexões WebSocket ativas
-websocket_connections = {}
 
 class WebSocketServer:
     def __init__(self):
@@ -21,7 +23,12 @@ class WebSocketServer:
         self.port = Config.WS_PORT
         self.server = None
         self._loop = None
+        self.websocket = None        
+        self.authenticated = False
+        self.user_id = None
+        self.username = None
     
+#? processamento incial
     async def handle_websocket(self, websocket):
         """Lida com conexões WebSocket"""
         path = websocket.request.path
@@ -48,8 +55,11 @@ class WebSocketServer:
                         user_id = response.get('data', {}).get('user_id')
                         username = data.get('username')
                         if user_id:
+                            user_id = int(user_id)
+                            websocket.username = username
                             websocket_connections[user_id] = websocket
                             logger.info(f"👤 Usuário {username} (ID: {user_id}) conectado via WebSocket")
+                            logger.debug(f"WS connections agora: {list(websocket_connections.keys())}")
                             
                             # Broadcast status online
                             await self.broadcast_user_status(user_id, username, True)
@@ -137,7 +147,9 @@ class WebSocketServer:
                 return await self.handle_get_friends_list(user_id)
             
             elif action in ['typing_start', 'typing_stop']:
-                return await self.handle_typing(data, user_id, action)
+                is_typing = action == 'typing_start'
+                await self.handle_typing_indicator(data, user_id, username, is_typing)
+                return create_response(True, "Indicador de digitação enviado")
             
             else:
                 return create_response(False, f"Ação '{action}' não reconhecida")
@@ -146,7 +158,8 @@ class WebSocketServer:
             logger.error(f"Erro no process_message para ação {action}: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return create_response(False, f"Erro interno: {str(e)}")
-    
+
+#? handlers iniciais
     async def handle_register(self, data):
         """Processa registro de usuário"""
         username = data.get('username')
@@ -203,50 +216,25 @@ class WebSocketServer:
             await self.broadcast_user_status(user_id, username, False)
         return create_response(success, message)
     
-    async def handle_send_message(self, data, user_id, username):
-        """Processa envio de mensagem"""
-        if not user_id:
-            return create_response(False, "Usuário não autenticado")
+    def cleanup(self):
+        """Limpeza quando cliente desconecta"""
+        if self.authenticated and self.user_id:
+            # Atualiza status para offline
+            try:
+                from src.database.database import Database
+                from src.database.queries import Queries
+                
+                connection = Database.get_connection()
+                cursor = connection.cursor()
+                cursor.execute(Queries.UPDATE_USER_STATUS, (False, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.user_id))
+                connection.commit()
+            except Exception as e:
+                logger.error(f"Erro ao atualizar status: {e}")
         
-        receiver_username = data.get('receiver_username')
-        content = data.get('content')
-        
-        if not receiver_username or not content:
-            return create_response(False, "Receiver username e content são obrigatórios")
-        
-        success, message, message_id = MessageHandler.send_message(user_id, receiver_username, content)
-        return create_response(success, message, {'message_id': message_id} if success else None)
+        self.client_socket.close()
+        logger.info(f"🔌 Cliente {self.address} desconectado")
     
-    async def handle_get_contacts(self, user_id):
-        """Obtém lista de contatos"""
-        if not user_id:
-            return create_response(False, "Usuário não autenticado")
-        
-        contacts = MessageHandler.get_contacts(user_id)
-        return create_response(True, "Lista de contatos", contacts)
-    
-    async def handle_get_undelivered_messages(self, user_id):
-        """Obtém mensagens não entregues"""
-        if not user_id:
-            return create_response(False, "Usuário não autenticado")
-        
-        messages = MessageHandler.get_undelivered_messages(user_id)
-        return create_response(True, "Mensagens não entregues", messages)
-    
-    async def handle_get_conversation_history(self, data, user_id):
-        """Obtém histórico de conversa"""
-        if not user_id:
-            return create_response(False, "Usuário não autenticado")
-        
-        other_user_id = data.get('other_user_id')
-        limit = data.get('limit', 50)
-        
-        if not other_user_id:
-            return create_response(False, "other_user_id é obrigatório")
-        
-        messages = MessageHandler.get_conversation_history(user_id, other_user_id, limit)
-        return create_response(True, "Histórico de conversa", messages)
-    
+#? amizade
     async def handle_send_friend_request(self, data, user_id):
         """Envia solicitação de amizade"""
         if not user_id:
@@ -317,6 +305,52 @@ class WebSocketServer:
             'message': "Lista de amigos",
             'data': friends
         }
+          
+#! mensagens
+    async def handle_send_message(self, data, user_id, username):
+        """Processa envio de mensagem"""
+        if not user_id:
+            return create_response(False, "Usuário não autenticado")
+        
+        receiver_username = data.get('receiver_username')
+        content = data.get('content')
+        
+        if not receiver_username or not content:
+            return create_response(False, "Receiver username e content são obrigatórios")
+    
+        success, message, message_id = MessageHandler.send_message(user_id, receiver_username, content)
+                 
+        return create_response(success, message, {'message_id': message_id} if success else None)
+    
+    async def handle_get_contacts(self, user_id):
+        """Obtém lista de contatos"""
+        if not user_id:
+            return create_response(False, "Usuário não autenticado")
+        
+        contacts = MessageHandler.get_contacts(user_id)
+        return create_response(True, "Lista de contatos", contacts)
+    
+    async def handle_get_undelivered_messages(self, user_id):
+        """Obtém mensagens não entregues"""
+        if not user_id:
+            return create_response(False, "Usuário não autenticado")
+        
+        messages = MessageHandler.get_undelivered_messages(user_id)
+        return create_response(True, "Mensagens não entregues", messages)
+    
+    async def handle_get_conversation_history(self, data, user_id):
+        """Obtém histórico de conversa"""
+        if not user_id:
+            return create_response(False, "Usuário não autenticado")
+        
+        other_user_id = data.get('other_user_id')
+        limit = data.get('limit', 50)
+        
+        if not other_user_id:
+            return create_response(False, "other_user_id é obrigatório")
+        
+        messages = MessageHandler.get_conversation_history(user_id, other_user_id, limit)
+        return create_response(True, "Histórico de conversa", messages)
     
     async def handle_real_time_message(self, data, sender_id, sender_username):
         """Lida com mensagens em tempo real para WebSocket"""
@@ -333,27 +367,41 @@ class WebSocketServer:
             # Obtém ID do receptor
             receiver_id = AuthHandler.get_user_id(receiver_username)
             if not receiver_id:
+                logger.warning(f"Destinatário {receiver_username} não encontrado")
                 return
+                
+            real_time_msg = {
+                'action': 'new_message',
+                'id': None,  # Será definido pelo cliente temporariamente
+                'sender_id': sender_id,
+                'sender_username': sender_username,
+                'receiver_id': receiver_id,
+                'receiver_username': receiver_username,
+                'content': content,
+                'timestamp': self.get_current_timestamp(),
+                'is_delivered': True,
+                'message_type': 'real_time'
+            }
             
-            # Se o receptor estiver online via WebSocket, envia a mensagem em tempo real
+                
             if receiver_id in websocket_connections:
-                receiver_ws = websocket_connections[receiver_id]
-                
-                real_time_msg = {
-                    'action': 'new_message',
-                    'sender_id': sender_id,
-                    'sender_username': sender_username,
-                    'content': content,
-                    'timestamp': self.get_current_timestamp(),
-                    'message_type': 'real_time'
-                }
-                
+                receiver_ws = websocket_connections[receiver_id]  
+                  
                 await receiver_ws.send(json.dumps(real_time_msg, cls=DateTimeEncoder))
                 logger.info(f"📨 Mensagem em tempo real enviada para {receiver_username}")
+            
+            elif receiver_id in tcp_connections:
+                receiver_socket = tcp_connections[receiver_id]
+                message_json = json.dumps(real_time_msg, cls=DateTimeEncoder) + "\n"
+                receiver_socket.sendall(message_json.encode('utf-8'))
+                logger.info(f"📨 Mensagem em tempo real enviada para {receiver_username} (TCP)")
+            else:
+                logger.info(f"📨 Destinatário {receiver_username} offline. Mensagem será entregue quando online.")
                 
         except Exception as e:
             logger.error(f"Erro ao enviar mensagem em tempo real: {e}")
-    
+ 
+#! digitação   
     async def handle_typing_indicator(self, data, user_id, username, is_typing):
         """Lida com indicadores de digitação em tempo real"""
         if not user_id or not username:
@@ -363,31 +411,38 @@ class WebSocketServer:
             receiver_username = data.get('receiver_username')
             
             if not receiver_username:
+                logger.warning(f"Usuário {receiver_username} não encontrado")
                 return
             
-            # Obtém ID do receptor
             receiver_id = AuthHandler.get_user_id(receiver_username)
             if not receiver_id:
+                logger.info(f"Destinatário {receiver_username} (ID: {receiver_id}) não está online")
                 return
             
-            # Se o receptor estiver online via WebSocket, envia o indicador
+            typing_msg = {
+                'action': 'user_typing',
+                'user_id': user_id,
+                'username': username,
+                'is_typing': is_typing,
+                'timestamp': self.get_current_timestamp()
+            }
+            
             if receiver_id in websocket_connections:
                 receiver_ws = websocket_connections[receiver_id]
-                
-                typing_msg = {
-                    'action': 'user_typing',
-                    'user_id': user_id,
-                    'username': username,
-                    'is_typing': is_typing,
-                    'timestamp': self.get_current_timestamp()
-                }
-                
                 await receiver_ws.send(json.dumps(typing_msg, cls=DateTimeEncoder))
-                logger.debug(f"✍️ Indicador de digitação enviado para {receiver_username}")
+                logger.debug(f"✍️ Indicador de digitação enviado (WebSocket) para {receiver_username}")
+
+            # TCP
+            elif receiver_id in tcp_connections:
+                receiver_socket = tcp_connections[receiver_id]
+                message_json = json.dumps(typing_msg, cls=DateTimeEncoder) + "\n"
+                receiver_socket.sendall(message_json.encode('utf-8'))
+                logger.debug(f"✍️ Indicador de digitação enviado (TCP) para {receiver_username}")
                 
         except Exception as e:
             logger.error(f"Erro ao enviar indicador de digitação: {e}")
-    
+
+#? outrtos    
     def get_current_timestamp(self):
         """Retorna timestamp atual no formato ISO"""
         from datetime import datetime
@@ -427,6 +482,9 @@ class WebSocketServer:
         """Inicia o servidor WebSocket - versão simplificada e funcional"""
         async def main():
             try:
+                global websocket_loop
+                websocket_loop = asyncio.get_running_loop()
+                
                 async def websocket_handler(websocket, path):
                     await self.handle_websocket(websocket, path)
                     
