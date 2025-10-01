@@ -30,12 +30,12 @@ def serialize_data(data):
     else:
         return data
 
-def create_response(success, message, data=None):
-    """Cria resposta padronizada"""
-    response = {
-        'success': success,
-        'message': message,
+def create_response(success, message, data=None, action=None):
+    resp = {
+        "success": success,
+        "message": message,
+        "action": action
     }
-    if data:
-        response['data'] = serialize_data(data)
-    return response
+    if data is not None:
+        resp["data"] = data
+    return resp
