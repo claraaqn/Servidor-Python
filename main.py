@@ -60,17 +60,13 @@ class ChatServer:
             
             logger.info("📡 Iniciando servidores TCP e WebSocket...")
             
-            # Inicia servidor TCP em thread separada
             self.tcp_server = TCPServer()
             tcp_thread = threading.Thread(target=self.tcp_server.start, daemon=True)
             tcp_thread.start()
             
-            # Inicia servidor WebSocket em thread separada
             self.websocket_server = WebSocketServer()
             
-            # CORREÇÃO: Remove o import desnecessário dentro da função
             def start_ws():
-                # Cria um novo loop de eventos para esta thread
                 asyncio.set_event_loop(asyncio.new_event_loop())
                 self.websocket_server.start()
 

@@ -101,15 +101,27 @@ class TCPClientHandler:
 
             elif action == 'send_message':
                 return self.handle_send_message(data)
-
-            elif action == 'get_contacts':
-                return self.handle_get_contacts()
-
-            elif action == 'get_undelivered_messages':
-                return self.handle_get_undelivered_messages()
-
+            
             elif action == 'get_conversation_history':
                 return self.handle_get_conversation_history(data)
+
+            elif action == 'check_user_online_status':
+                return self.handle_check_user_online_status(data)
+            
+            elif action == 'get_pending_messages':
+                return self.handle_get_pending_messages(data)
+            
+            elif action == 'confirm_message_delivery':
+                return self.handle_confirm_message_delivery(data)
+            
+            elif action == 'cleanup_delivered_messages':
+                return self.handle_cleanup_delivered_messages(self, data)
+            
+            elif action == 'mark_conversation_delivered':
+                return self.handle_mark_conversation_delivered(data)
+            
+            elif action == 'get_contacts':
+                return self.handle_get_contacts(data)
 
             elif action == 'send_friend_request':
                 return self.handle_send_friend_request(data, user_id)
@@ -282,141 +294,247 @@ class TCPClientHandler:
             'message': "Lista de amigos",
             'data': friends
         }
-    
-#! mensagens
+
+#! mensagaens    
     def handle_send_message(self, data):
+        """Handler simplificado - servidor decide online/offline"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+            
+        receiver_username = data.get('receiver_username')
+        content = data.get('content')
+        local_id = data.get('local_id')
+        
+        logger.info(f"📨 Mensagem de {self.username} para {receiver_username}")
+        
+        if not receiver_username or not content:
+            return create_response(False, "Dados incompletos")
+        
+        receiver_id = AuthHandler.get_user_id(receiver_username)
+        is_receiver_online = False
+        
+        if receiver_id:
+            is_receiver_online = (receiver_id in websocket_connections or 
+                                receiver_id in tcp_connections)
+        
+        if is_receiver_online:
+            logger.info(f"✅ Destinatário online - entregando em tempo real SEM banco")
+            
+            success = self.deliver_realtime_message(data, self.user_id, self.username, receiver_id)
+            
+            if success:
+                return {
+                    "action": "send_message_response",
+                    "success": True,
+                    "message": "Mensagem entregue em tempo real",
+                    "data": {
+                        "message_id": None,  
+                        "is_offline": False,
+                        "local_id": local_id
+                    }
+                }
+        
+        logger.info(f"💾 Salvando mensagem no banco")
+        success, message, message_id = MessageHandler.send_message(
+            self.user_id, receiver_username, content
+        )
+        
+        if success:
+            return {
+                "action": "send_message_response",
+                "success": True,
+                "message": "Mensagem salva no servidor",
+                "data": {
+                    "message_id": message_id,
+                    "is_offline": True,
+                    "local_id": local_id
+                }
+            }
+        else:
+            return create_response(False, message)
+       
+    def deliver_realtime_message(self, data, sender_id, sender_username, receiver_id):
+        """Entrega mensagem em tempo real sem salvar no servidor"""
+        try:
+            import time
+            message_id = int(time.time() * 1000)
+            
+            real_time_msg = {
+                'action': 'new_message',
+                'id': message_id,
+                'sender_id': sender_id,
+                'sender_username': sender_username,
+                'receiver_id': receiver_id,
+                'receiver_username': data.get('receiver_username'),
+                'content': data.get('content'),
+                'timestamp': datetime.datetime.now().isoformat(),
+                'is_delivered': True,
+                'message_type': 'real_time'
+            }
+            
+            message_sent = False
+                
+            if receiver_id in tcp_connections:                
+                try:
+                    message_json = json.dumps(real_time_msg, cls=DateTimeEncoder) + "\n"
+                    receiver_socket = tcp_connections[receiver_id]
+                    receiver_socket.sendall(message_json.encode('utf-8'))
+                    logger.info(f"✅ Mensagem entregue via TCP")
+                    message_sent = True
+                
+                except Exception as e:
+                    logger.error(f"❌ Erro TCP: {e}")
+                    if receiver_id in tcp_connections:
+                        del tcp_connections[receiver_id]
+                        
+            if message_sent and data.get('db_message_id'):
+                db_message_id = data['db_message_id']
+                success = MessageHandler.delete_message_after_delivery(db_message_id)
+                if success:
+                    logger.info(f"🗑️ Mensagem {db_message_id} excluída do banco após entrega")
+                else:
+                    logger.warning(f"⚠️ Não foi possível excluir mensagem {db_message_id} do banco")
+            
+            return message_sent
+            
+        except Exception as e:
+            logger.error(f"💥 Erro ao entregar mensagem: {e}")
+            return False  
+    
+    def handle_get_pending_messages(self, data):
+        """Envia mensagens pendentes e marca para exclusão"""
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+
+        try:
+            pending_messages = MessageHandler.get_undelivered_messages(self.user_id)
+            
+            logger.info(f"📨 Encontradas {len(pending_messages)} mensagens pendentes para {self.username}")
+            
+            return {
+                "action": "get_pending_messages_response",
+                "success": True,
+                "message": f"{len(pending_messages)} mensagens pendentes",
+                "data": pending_messages
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar mensagens pendentes: {e}")
+            return create_response(False, f"Erro ao buscar mensagens pendentes: {e}")
+
+    def handle_confirm_message_delivery(self, data):
+        """Confirma recebimento e exclui mensagem do servidor"""
         if not self.authenticated:
             return create_response(False, "Usuário não autenticado")
         
-        receiver_username = data.get('receiver_username')
-        content = data.get('content')
+        message_id = data.get('message_id')
+        if not message_id:
+            return create_response(False, "message_id é obrigatório")
         
-        if not receiver_username or not content:
-            return create_response(False, "Receiver username e content são obrigatórios")
+        try:
+            success = MessageHandler.mark_message_as_delivered(message_id)
         
-        success, message, message_id = MessageHandler.send_message(self.user_id, receiver_username, content)
-        self.handle_real_time_message_tcp(data, self.user_id, self.username)
-        
-        return {
-            "action": "send_message_response",
-            "success": success,
-            "message": message,
-            "data": {"message_id": message_id} if success else None
-        }
-    
-    def handle_get_undelivered_messages(self):
-        if not self.authenticated:
-            return {
-                "action": "get_undelivered_messages_response",
-                "success": False,
-                "message": "Usuário não autenticado"
-            }
-
-        messages = MessageHandler.get_undelivered_messages(self.user_id)
-        return {
-            "action": "get_undelivered_messages_response",
-            "success": True,
-            "message": "Mensagens não entregues",
-            "data": messages
-        }
-
+            if success:
+                logger.info(f"🗑️ Mensagem {message_id} excluída do servidor após entrega")
+                return {
+                    "action": "confirm_delivery_response",
+                    "success": True,
+                    "message": "Mensagem excluída do servidor"
+                }
+            else:
+                return create_response(False, "Erro ao excluir mensagem")
+        except Exception as e:
+            logger.error(f"❌ Erro ao confirmar entrega: {e}")
+            return create_response(False, f"Erro ao confirmar entrega: {e}")
+   
     def handle_get_conversation_history(self, data):
         if not self.authenticated:
-            return {
-                "action": "get_conversation_history_response",
-                "success": False,
-                "message": "Usuário não autenticado"
-            }
-        
-        other_user_id = data.get('other_user_id')
+            return create_response(False, "Usuário não autenticado")
+            
+        other_username = data.get('other_username')
         limit = data.get('limit', 50)
         
-        if not other_user_id:
-            return {
-                "action": "get_conversation_history_response",
-                "success": False,
-                "message": "other_user_id é obrigatório"
-            }
-
-        messages = MessageHandler.get_conversation_history(self.user_id, other_user_id, limit)
+        if not other_username:
+            return create_response(False, "other_username é obrigatório")
+        
+        # 🟢 SIMPLIFICAÇÃO: Buscar todas sem filtros complexos
+        messages = MessageHandler.get_conversation_history_by_username(
+            self.user_id, other_username, limit
+        )
+        
         return {
             "action": "get_conversation_history_response",
             "success": True,
-            "message": "Histórico de conversa",
+            "message": f"Histórico com {len(messages)} mensagens",
             "data": messages
         }
-   
+
+    def handle_cleanup_delivered_messages(self, data):
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        other_username = data.get('other_username')
+        if not other_username:
+            return create_response(False, "other_username é obrigatório")
+        
+        other_user_id = AuthHandler.get_user_id(other_username)
+        if not other_user_id:
+            return create_response(False, "Usuário não encontrado")
+        
+        count = MessageHandler.get_undelivered_count(self.user_id, other_user_id)
+        
+        return {
+            "action": "cleanup_messages_response",
+            "success": True,
+            "message": f"{count} mensagens não entregues",
+            "data": {"pending_count": count}
+        }
+
+    def handle_check_user_online_status(self, data):
+        if not self.authenticated:
+            return create_response(False, "Usuário não autenticado")
+        
+        username = data.get('username')
+        if not username:
+            return create_response(False, "Username é obrigatório")
+        
+        user_id = AuthHandler.get_user_id(username)
+        is_online = False
+        
+        if user_id:
+            is_online = (user_id in websocket_connections or 
+                        user_id in tcp_connections)
+        
+        return {
+            "action": "user_online_status_response",
+            "success": True,
+            "data": {
+                "username": username,
+                "is_online": is_online,
+                "user_id": user_id
+            }
+        }
+  
     def handle_get_contacts(self):
         if not self.authenticated:
             return create_response(False, "Usuário não autenticado")
         
         contacts = MessageHandler.get_contacts(self.user_id)
         return create_response(True, "Lista de contatos", contacts)
- 
-    def handle_real_time_message_tcp(self, data, sender_id, sender_username):
-        """Lida com mensagens em tempo real para clientes TCP"""
-        if not sender_id or not sender_username:
-            return
-
+   
+    @staticmethod
+    def get_conversation_history_by_username(user_id, other_username, limit=50):
+        """Busca histórico por username em vez de user_id"""
         try:
-            receiver_username = data.get('receiver_username')
-            content = data.get('content')
-
-            if not receiver_username:
-                return
-
-            receiver_id = AuthHandler.get_user_id(receiver_username)
-            if not receiver_id:
-                for uid, ws in websocket_connections.items():
-                    if getattr(ws, "username", None) == receiver_username:
-                        receiver_id = uid
-                        break
-
-            if not receiver_id:
-                logger.warning(f"Destinatário {receiver_username} não encontrado em AuthHandler nem WS")
-                return
-
-            real_time_msg = {
-                'action': 'new_message',
-                'id': None,  # Será definido pelo cliente temporariamente
-                'sender_id': sender_id,
-                'sender_username': sender_username,
-                'receiver_id': receiver_id,
-                'receiver_username': receiver_username,
-                'content': content,
-                'timestamp': datetime.datetime.now().isoformat(),
-                'is_delivered': True,
-                'message_type': 'real_time'
-            }
-            logger.debug(f"WS connections: {list(websocket_connections.keys())}")
-            logger.debug(f"Receiver {receiver_username} tem ID {receiver_id}")
-
-            if receiver_id in websocket_connections and websocket_loop:
-                receiver_ws = websocket_connections[receiver_id]
-                asyncio.run_coroutine_threadsafe(
-                    receiver_ws.send(json.dumps(real_time_msg, cls=DateTimeEncoder)),
-                    websocket_loop
-                )
-                logger.info(f"📨 Mensagem em tempo real enviada para {receiver_username} via WebSocket")
+            other_user_id = AuthHandler.get_user_id(other_username)
+            if not other_user_id:
+                return []
                 
-            elif receiver_id in tcp_connections:                
-                try:
-                    message_json = json.dumps(real_time_msg, cls=DateTimeEncoder) + "\n"
-                    receiver_socket = tcp_connections[receiver_id]
-                    receiver_socket.sendall(message_json.encode('utf-8'))
-                    logger.info(f"📨 Mensagem em tempo real enviada para {receiver_username} via TCP")
-                
-                except Exception as e:
-                    logger.error(f"Erro ao enviar mensagem TCP para {receiver_username}: {e}")
-                    
-                    if receiver_id in tcp_connections:
-                        del tcp_connections[receiver_id]
-            else:
-                logger.info(f"📨 Destinatário {receiver_username} offline. Mensagem será entregue quando online.")
-            
+            return MessageHandler.get_conversation_history(user_id, other_user_id, limit)
         except Exception as e:
-            logger.error(f"Erro ao enviar mensagem em tempo real via TCP: {e}")
-
+            logger.error(f"Erro ao buscar histórico por username: {e}")
+            return []
+        
 #! digitação
     def handle_typing_indicator(self, data, user_id, username, is_typing):
         if not user_id or not username:
