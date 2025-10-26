@@ -18,7 +18,6 @@ class MessageHandler:
             connection = Database.get_connection()
             cursor = connection.cursor()
             
-            # Obtém ID do destinatário
             cursor.execute(Queries.GET_USER_ID, (receiver_username,))
             receiver_result = cursor.fetchone()
             
@@ -27,24 +26,21 @@ class MessageHandler:
             
             receiver_id = receiver_result[0]
             
-            # Verifica se o destinatário está online
             cursor.execute(Queries.CHECK_USER_ONLINE, (receiver_id,))
             online_result = cursor.fetchone()
             is_online = online_result[0] if online_result else False
+
+            delivered = is_online
             
-            # Insere a mensagem no banco
             cursor.execute(
-                Queries.INSERT_MESSAGE,
-                (sender_id, receiver_id, content)
+                "INSERT INTO messages (sender_id, receiver_id, content, timestamp, delivered) VALUES (%s, %s, %s, %s, %s)",
+                (sender_id, receiver_id, content, datetime.now(), 0)  # %s em vez de ?
             )
             message_id = cursor.lastrowid
             
-            # Se o destinatário estiver offline, a mensagem ficará com delivered=FALSE
-            # e será entregue quando ele voltar online
-            
             connection.commit()
             
-            logger.info(f"💬 Mensagem {message_id} enviada de {sender_id} para {receiver_username}")
+            logger.info(f"💬 Mensagem {message_id} enviada de {sender_id} para {receiver_username} (delivered: {delivered})")
             return True, "Mensagem enviada com sucesso", message_id
             
         except mysql.connector.Error as e:
@@ -88,15 +84,25 @@ class MessageHandler:
             connection = Database.get_connection()
             cursor = connection.cursor(dictionary=True)
             
-            cursor.execute(Queries.GET_UNDELIVERED_MESSAGES, (user_id,))
-            messages = cursor.fetchall()
-            
-            # Marca as mensagens como entregues
-            if messages:
-                cursor.execute(Queries.MARK_MESSAGES_DELIVERED, (user_id,))
-                connection.commit()
-            
-            return serialize_data(messages)
+            cursor.execute("""
+                SELECT id, sender_id, receiver_id, content, timestamp 
+                FROM messages 
+                WHERE receiver_id = %s AND delivered = 0
+                ORDER BY timestamp ASC
+            """, (user_id,))
+           
+            messages = []
+            for row in cursor.fetchall():
+                messages.append({
+                'id': row['id'], 
+                'sender_id': row['sender_id'],
+                'receiver_id': row['receiver_id'],
+                'content': row['content'],
+                'timestamp': row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp'])
+            })
+        
+            connection.close()
+            return messages
             
         except mysql.connector.Error as e:
             logger.error(f"Erro ao obter mensagens não entregues: {e}")
@@ -274,4 +280,62 @@ class MessageHandler:
             logger.error(f"Erro inesperado ao obter lista de amigos: {e}")
             return []
         
-        
+    @staticmethod
+    def get_last_message_id(sender_id, receiver_id, content):
+        """Busca o ID da última mensagem enviada para incluir no real_time_msg"""
+        try:
+            connection = Database.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            
+            cursor.execute("""
+                SELECT id FROM messages 
+                WHERE sender_id = %s AND receiver_id = %s 
+                ORDER BY id DESC LIMIT 1
+            """, (sender_id, receiver_id))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            
+            if result:
+                logger.info(f"✅ ID da mensagem encontrado: {result['id']}")
+                return result['id']
+            else:
+                logger.warning("⚠️ Nenhuma mensagem encontrada para obter ID")
+                return None
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar ID da mensagem: {e}")
+            return None
+
+    @staticmethod
+    def mark_message_as_delivered(message_id):
+        """Marca mensagem como entregue no banco"""
+        try:
+            conn = Database.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "UPDATE messages SET delivered = 1 WHERE id = %s",
+                (message_id,)
+            )
+            
+            cursor.execute(
+                "DELETE FROM messages WHERE id = %s AND delivered = 1",
+                (message_id,)
+            )
+            
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+            
+            if deleted:
+                logger.info(f"🗑️ Mensagem {message_id} EXCLUÍDA do banco após entrega")
+                return True
+            else:
+                logger.warning(f"⚠️ Mensagem {message_id} não foi excluída (não encontrada ou não entregue)")
+                return False
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao marcar mensagem {message_id} como entregue: {e}")
+            return False
+    

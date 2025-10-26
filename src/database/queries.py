@@ -48,7 +48,12 @@ class Queries:
     
     MARK_MESSAGES_DELIVERED = "UPDATE messages SET delivered = TRUE WHERE receiver_id = %s AND delivered = FALSE"
     
-    # Queries de Contatos (todos os usuários)
+    GET_LAST_MESSAGE_ID = """
+        SELECT id FROM messages 
+        WHERE sender_id = %s AND receiver_id = %s AND content = %s 
+        ORDER BY timestamp DESC LIMIT 1
+    """
+
     GET_ALL_CONTACTS = """
         SELECT u.id, u.username, us.is_online, us.last_seen
         FROM users u
