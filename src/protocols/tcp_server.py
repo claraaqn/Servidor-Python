@@ -95,6 +95,9 @@ class TCPClientHandler:
 
             elif action == 'login':
                 return self.handle_login(data)
+            
+            elif action == 'get_user_salt':
+                return self.handle_get_user_salt(data)
 
             elif action == 'logout':
                 return self.handle_logout(data)
@@ -153,42 +156,67 @@ class TCPClientHandler:
     def handle_register(self, data):
         username = data.get('username')
         password = data.get('password')
+        public_key = data.get('public_key')
+        salt = data.get("salt")
+        request_id = data.get('request_id')
         
-        success, message, user_id = AuthHandler.register_user(username, password)
+        success, message, user_id = AuthHandler.register_user(username, password, public_key, salt)
+        
+        response_data = {
+            'success': success,
+            'message': message,
+            'action': 'register_response', 
+            'request_id': request_id,     
+        }
+        
         if success:
-            return create_response(True, message, {'user_id': user_id})
+            response_data['data'] = {'user_id': user_id}
+            return response_data
         else:
             return create_response(False, message)
     
     def handle_login(self, data):
         username = data.get('username')
         password = data.get('password')
+        request_id = data.get('request_id')  
         
-        success, message, user_id = AuthHandler.authenticate_user(username, password)
+        success, message, user_data = AuthHandler.authenticate_user(username, password)
+        
+        response_data = {
+            'success': success,
+            'message': message,
+            'action': 'login_response', 
+            'request_id': request_id,  
+        }
+        
         if success:
-            self.user_id = user_id
-            self.username = username
-            self.authenticated = True
-            
-            tcp_connections[user_id] = self.client_socket
-            
-            connection = Database.get_connection()
-            cursor = connection.cursor()
-            cursor.execute(Queries.UPDATE_USER_STATUS, (True, None, self.user_id))
-            connection.commit()
-            
-            return {
-                'action': 'login_response',
-                'success': True,
-                'message': message,
-                'data': {'user_id': user_id}
-            }
+            response_data['data'] = {'user_data': user_data}
+            return response_data
         else:
-            return {
-                'action': 'login_response',
-                'success': False,
-                'message': message
-            }
+            return response_data
+
+    def handle_get_user_salt(self, data):
+        """
+        Manipula a requisição para obter o salt de um usuário
+        """
+        username = data.get('username')
+        request_id = data.get('request_id')
+                
+        success, message, salt = AuthHandler.get_user_salt(username)
+        
+        response_data = {
+            'success': success,
+            'message': message,
+            'action': 'user_salt_response',
+            'request_id': request_id,
+        }
+        
+        if success:
+            response_data['data'] = {'salt': salt}
+        else:
+            print(f"❌ SALT NÃO ENCONTRADO: {message}")
+        
+        return response_data
     
     def handle_logout(self, data):
         """Handle user logout"""
