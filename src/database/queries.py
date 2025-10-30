@@ -1,10 +1,11 @@
 class Queries:
     # Queries de Usuário
     CHECK_USER_EXISTS = "SELECT id FROM users WHERE username = %s"
-    CREATE_USER = "INSERT INTO users (username, password) VALUES (%s, %s)"
-    GET_USER = "SELECT id, username, password, updated_at FROM users WHERE username = %s AND password = %s"
+    CREATE_USER = "INSERT INTO users (username, password, public_key, salt) VALUES (%s, %s, %s, %s)"    
+    GET_USER_BY_USERNAME = "SELECT id, username, password, public_key, salt, created_at FROM users WHERE username = %s"
+    GET_USER_BY_ID = "SELECT id, username, password, public_key, salt, created_at FROM users WHERE id = %s"
     GET_USER_ID = "SELECT id FROM users WHERE username = %s"
-    GET_ALL_USERS = "SELECT id, username, created_at, updated_at FROM users WHERE id != %s"
+    GET_ALL_USERS = "SELECT id, username, public_key, created_at, updated_at FROM users WHERE id != %s"
     
     # Queries de Status do Usuário
     CREATE_USER_STATUS = "INSERT INTO user_status (user_id, is_online) VALUES (%s, %s)"
@@ -12,10 +13,10 @@ class Queries:
 
     CHECK_USER_ONLINE = "SELECT is_online FROM user_status WHERE user_id = %s"
     GET_ONLINE_USERS = """
-        SELECT u.id, u.username 
+        SELECT u.id, u.username, u.public_key
         FROM users u 
         JOIN user_status us ON u.id = us.user_id 
-        WHERE us.is_online = TRUE
+        WHERE us.is_online = TRUE AND u.id != %s
     """
     
     # Queries de Mensagens
