@@ -4,6 +4,7 @@ import socket
 import threading
 import json
 import logging
+from src.handlers.handshake_handler import HandshakeHandler
 from src.config.config import Config
 from src.database.database import Database
 from src.database.queries import Queries
@@ -23,6 +24,7 @@ class TCPClientHandler:
         self.username = None
         self.authenticated = False
         self.running = True
+        self.handshake_handler = HandshakeHandler()
         
 
 #? processamento incial
@@ -101,6 +103,9 @@ class TCPClientHandler:
 
             elif action == 'logout':
                 return self.handle_logout(data)
+            
+            elif action == 'handshake_init':
+                return self.handshake_handler.handle_handshake_init(data)
 
             elif action == 'send_message':
                 return self.handle_send_message(data)
