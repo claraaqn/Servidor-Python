@@ -25,6 +25,8 @@ class TCPClientHandler:
         self.authenticated = False
         self.running = True
         self.handshake_handler = HandshakeHandler()
+        self.session_id = None
+        self.encryption_enabled = False
         
 
 #? processamento incial
@@ -58,8 +60,9 @@ class TCPClientHandler:
                         resp_data = json.loads(line)
                         
                         if resp_data.get('action') == 'login' and response.get('success'):
-                            user_id = response.get('data', {}).get('user_id')
-                            username = resp_data.get('username')
+                            user_data = response.get('data', {}).get('user_data', {})
+                            user_id = user_data.get('user_id')
+                            username = user_data.get('username')
                             self.user_id = user_id
                             self.username = username
                             self.authenticated = True
@@ -91,6 +94,9 @@ class TCPClientHandler:
         try:
             data = json.loads(raw_message)
             action = data.get('action')
+            
+            if self.encryption_enabled and self._is_encrypted_message(data):
+                return self._handle_encrypted_message(data)
 
             if action == 'register':
                 return self.handle_register(data)
@@ -105,8 +111,13 @@ class TCPClientHandler:
                 return self.handle_logout(data)
             
             elif action == 'handshake_init':
-                return self.handshake_handler.handle_handshake_init(data)
-
+                response = self.handshake_handler.handle_handshake_init(data)
+                if response.get('success'):
+                    self.session_id = response['data']['session_id']
+                    self.encryption_enabled = True
+                    print(f"🛡️ Criptografia ativada para sessão: {self.session_id}")
+                return response
+            
             elif action == 'send_message':
                 return self.handle_send_message(data)
             
@@ -132,7 +143,7 @@ class TCPClientHandler:
                 return self.handle_get_contacts(data)
 
             elif action == 'send_friend_request':
-                return self.handle_send_friend_request(data, user_id)
+                return self.handle_send_friend_request(data, self.user_id)
 
             elif action == 'get_friend_requests':
                 return self.handle_get_friend_requests(user_id)
@@ -156,6 +167,65 @@ class TCPClientHandler:
         except Exception as e:
             logger.error(f"Erro ao processar mensagem: {e}")
             return create_response(False, f"Erro interno: {str(e)}")
+
+#! criptografia
+    def _is_encrypted_message(self, data):
+        """Verifica se a mensagem está criptografada"""
+        return data.get('action') == 'encrypted_message' and 'ciphertext' in data and 'hmac' in data
+    
+    def _handle_encrypted_message(self, data):
+        """Processa mensagem criptografada"""
+        try:
+            if not self.session_id:
+                return create_response(False, "Sessão não estabelecida")
+            
+            crypto_service = self.handshake_handler.get_crypto_service()
+            
+            # Descriptografa a mensagem
+            encrypted_payload = {
+                'ciphertext': data['ciphertext'],
+                'hmac': data['hmac']
+            }
+            
+            decrypted_json = crypto_service.decrypt_message(self.session_id, encrypted_payload)
+            decrypted_data = json.loads(decrypted_json)
+            
+            print(f"🔓 Mensagem descriptografada: {decrypted_data.get('action')}")
+            
+            # Processa a mensagem descriptografada
+            return self.process_decrypted_message(decrypted_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao processar mensagem criptografada: {e}")
+            return create_response(False, f"Erro de criptografia: {str(e)}")
+    
+    def process_decrypted_message(self, decrypted_data):
+        """Processa mensagem já descriptografada"""
+        action = decrypted_data.get('action')
+        user_id = self.user_id
+        username = self.username
+        
+        # Reprocessa as ações com os dados descriptografados
+        if action == 'send_message':
+            return self.handle_send_message(decrypted_data)
+        
+        elif action == 'get_conversation_history':
+            return self.handle_get_conversation_history(decrypted_data)
+        
+        elif action == 'typing_start':
+            is_typing = True
+            self.handle_typing_indicator(decrypted_data, user_id, username, is_typing)
+            return create_response(True, "Indicador de digitação enviado")
+        
+        elif action == 'typing_stop':
+            is_typing = False
+            self.handle_typing_indicator(decrypted_data, user_id, username, is_typing)
+            return create_response(True, "Indicador de digitação enviado")
+        
+        # Adicione outras ações que devem ser criptografadas
+        
+        else:
+            return create_response(False, f"Ação criptografada '{action}' não reconhecida")
 
 #? handlers iniciais
     def handle_register(self, data):
@@ -195,8 +265,16 @@ class TCPClientHandler:
         }
         
         if success:
-            response_data['data'] = {'user_data': user_data}
+            self.user_id = user_data['user_id']
+            self.username = user_data['username']
+            self.authenticated = True
+            
+            response_data['data'] = {'user_data': user_data} 
+            
+            logger.info(f"👤 Usuário {self.username} (ID: {self.user_id}) autenticado via TCP")
+           
             return response_data
+            
         else:
             return response_data
 
@@ -237,6 +315,11 @@ class TCPClientHandler:
     
     def cleanup(self):
         """Limpeza quando cliente desconecta"""
+        if self.encryption_enabled and self.session_id:
+            # Remove chaves de sessão
+            self.handshake_handler.get_crypto_service().remove_session_keys(self.session_id)
+            print(f"🔑 Chaves de sessão removidas: {self.session_id}")
+        
         if self.authenticated and self.user_id:
             # Atualiza status para offline
             try:
@@ -254,11 +337,15 @@ class TCPClientHandler:
                 logger.error(f"Erro ao atualizar status: {e}")
         
         self.client_socket.close()
-        logger.info(f"🔌 Cliente {self.address} desconectado")    
+        logger.info(f"🔌 Cliente {self.address} desconectado")  
     
 #? amizade         
     def handle_send_friend_request(self, data, user_id):
         """Handle sending friend request"""
+        sender_id = data.get('user_id')
+        
+        receiver_username = data.get('receiver_username')
+        
         if not self.authenticated:
             return create_response(False, "Usuário não autenticado")
         
@@ -615,10 +702,30 @@ class TCPClientHandler:
     
 #? respota ao cliente
     def send_response(self, response):
-        """Envia resposta para o cliente"""
+        """Envia resposta para o cliente, criptografando se necessário"""
         try:
-            response_json = json.dumps(response, cls=DateTimeEncoder) + '\n'
+            # CORREÇÃO: Não criptografar respostas de handshake
+            if (self.encryption_enabled and 
+                self.session_id and 
+                response.get('action') != 'handshake_response'):
+                
+                # Criptografa apenas mensagens que NÃO são handshake
+                crypto_service = self.handshake_handler.get_crypto_service()
+                response_json = json.dumps(response, cls=DateTimeEncoder)
+                encrypted_response = crypto_service.encrypt_message(self.session_id, response_json)
+                
+                # Envia como mensagem criptografada
+                final_response = {
+                    'action': 'encrypted_message',
+                    **encrypted_response
+                }
+                response_json = json.dumps(final_response, cls=DateTimeEncoder) + '\n'
+            else:
+                # Envia resposta normal (incluindo handshake_response)
+                response_json = json.dumps(response, cls=DateTimeEncoder) + '\n'
+            
             self.client_socket.send(response_json.encode('utf-8'))
+            
         except Exception as e:
             logger.error(f"Erro ao enviar resposta: {e}")
 
