@@ -2,7 +2,7 @@ import os
 import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 import secrets
@@ -22,8 +22,8 @@ class HandshakeHandler:
             salt_b64 = data.get('salt')
             request_id = data.get('request_id')
             
-            # 1. Servidor gera par DHE efêmero com Ed25519
-            server_private_key = ed25519.Ed25519PrivateKey.generate()
+            # 1. Servidor gera par DHE 
+            server_private_key = x25519.X25519PrivateKey.generate()
             server_public_key = server_private_key.public_key()
                         
             # 2. Decodifica chave pública do cliente
@@ -32,7 +32,7 @@ class HandshakeHandler:
             if len(client_public_key_bytes) != 32:
                 raise ValueError(f"Chave Ed25519 deve ter 32 bytes, mas tem {len(client_public_key_bytes)}")
             
-            client_public_key = ed25519.Ed25519PublicKey.from_public_bytes(client_public_key_bytes)
+            client_public_key = x25519.X25519PublicKey.from_public_bytes(client_public_key_bytes)
             
             # 3. Calcula segredo compartilhado
             
@@ -42,7 +42,6 @@ class HandshakeHandler:
             shared_secret = hashes.Hash(hashes.SHA256(), backend=default_backend())
             shared_secret.update(combined)
             shared_secret_bytes = shared_secret.finalize()[:32]
-            
             
             # 4. Deriva chaves de sessão com HKDF
             salt = base64.b64decode(salt_b64)
@@ -79,7 +78,7 @@ class HandshakeHandler:
             
             response_data = {
                 'success': True,
-                'message': 'Handshake Ed25519 realizado',
+                'message': 'Handshake realizado',
                 'action': 'handshake_response',
                 'request_id': request_id,
                 'data': {
@@ -87,6 +86,8 @@ class HandshakeHandler:
                     'session_id': session_id
                 }
             }
+            
+            print("HandShake OK")
                         
             return response_data
             
