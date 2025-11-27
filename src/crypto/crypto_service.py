@@ -1,5 +1,4 @@
 import base64
-import json
 import hashlib
 import hmac
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -12,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class ServerCryptoService:
     def __init__(self):
-        self._session_keys = {}  # session_id -> {encryption_key, hmac_key}
+        self._session_keys = {}
     
     def set_session_keys(self, session_id, encryption_key, hmac_key):
         """Define as chaves de sessão para um cliente"""
@@ -20,7 +19,11 @@ class ServerCryptoService:
             'encryption_key': encryption_key,
             'hmac_key': hmac_key
         }
-    
+        
+        logger.info(f"🔄 Chaves definidas para sessão {session_id}:")
+        logger.info(f"   ENC: {base64.b64encode(encryption_key).decode()}")
+        logger.info(f"   HMAC: {base64.b64encode(hmac_key).decode()}")
+        
     def remove_session_keys(self, session_id):
         """Remove chaves de sessão"""
         if session_id in self._session_keys:
@@ -35,10 +38,9 @@ class ServerCryptoService:
             session_keys = self._session_keys[session_id]
             encryption_key = session_keys['encryption_key']
             hmac_key = session_keys['hmac_key']
-            
-            # 1. Cifrar com AES-256
-            aleatorio = os.urandom(16)  # IV aleatório
-            cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(aleatorio), backend=default_backend())
+
+            iv = os.urandom(16)  # IV aleatório
+            cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
             encryptor = cipher.encryptor()
             
             # Padding PKCS7
@@ -47,10 +49,8 @@ class ServerCryptoService:
             
             ciphertext = encryptor.update(padded_data) + encryptor.finalize()
             
-            # 2. Combinar IV + ciphertext
-            encrypted_data = aleatorio + ciphertext
+            encrypted_data = iv + ciphertext
             
-            # 3. Calcular HMAC
             message_hmac = self._compute_hmac(encrypted_data, hmac_key)
             
             # 4. Codificar em base64 para transmissão
@@ -75,34 +75,37 @@ class ServerCryptoService:
             encryption_key = session_keys['encryption_key']
             hmac_key = session_keys['hmac_key']
                         
-            ciphertext_b64 = encrypted_message.get('ciphertext')
-            received_hmac_b64 = encrypted_message.get('hmac')
+            ciphertext_b64 = encrypted_message['ciphertext']
+            received_hmac_b64 = encrypted_message['hmac']
             
-            if not ciphertext_b64 or not received_hmac_b64:
-                raise Exception("Mensagem criptografada incompleta")
-            
-            # Decodificar de base64
+            # Decodificar
             encrypted_data = base64.b64decode(ciphertext_b64)
             received_hmac = base64.b64decode(received_hmac_b64)
             
-            # 1. Verificar HMAC antes de descriptografar
-            computed_hmac = self._compute_hmac(encrypted_data, hmac_key)
-            if not self._compare_hmac(received_hmac, computed_hmac):
-                raise Exception("HMAC inválido - mensagem corrompida ou adulterada")
-                        
-            # 2. Extrair IV e ciphertext
-            iv = encrypted_data[:16]
+            computed_hmac = hmac.new(
+                hmac_key, 
+                encrypted_data,  
+                digestmod=hashlib.sha256
+            ).digest()
+            
+            if not hmac.compare_digest(computed_hmac, received_hmac):
+                raise Exception("HMAC interno inválido")
+            
+            iv = encrypted_data[:16] 
             ciphertext = encrypted_data[16:]
             
-            # 3. Descriptografar
+            #Descriptografar
             cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
             decryptor = cipher.decryptor()
             
             padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+        
+            # 5. Remover padding PKCS7 manualmente
+            pad_length = padded_plaintext[-1]
+            if pad_length < 1 or pad_length > 16:
+                raise Exception("Padding inválido")
             
-            # 4. Remover padding
-            unpadder = padding.PKCS7(128).unpadder()
-            plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+            plaintext = padded_plaintext[:-pad_length]
             
             return plaintext.decode('utf-8')
             

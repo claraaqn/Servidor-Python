@@ -1,4 +1,3 @@
-import os
 import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -7,6 +6,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 import secrets
 from src.crypto.crypto_service import ServerCryptoService
+import logging
+
+logger = logging.getLogger(__name__)
 
 class HandshakeHandler:
     def __init__(self):
@@ -15,7 +17,7 @@ class HandshakeHandler:
     
     def handle_handshake_init(self, data):
         """
-        Handshake com Ed25519 (32 bytes) - CORREÇÃO: não criptografar resposta
+        Handshake
         """
         try:
             client_public_key_b64 = data.get('dhe_public_key')
@@ -35,13 +37,7 @@ class HandshakeHandler:
             client_public_key = x25519.X25519PublicKey.from_public_bytes(client_public_key_bytes)
             
             # 3. Calcula segredo compartilhado
-            
-            salt_bytes = base64.b64decode(salt_b64)
-            combined = client_public_key_bytes + salt_bytes
-            
-            shared_secret = hashes.Hash(hashes.SHA256(), backend=default_backend())
-            shared_secret.update(combined)
-            shared_secret_bytes = shared_secret.finalize()[:32]
+            shared_secret = server_private_key.exchange(client_public_key)
             
             # 4. Deriva chaves de sessão com HKDF
             salt = base64.b64decode(salt_b64)
@@ -54,7 +50,7 @@ class HandshakeHandler:
                 backend=default_backend()
             )
             
-            key_material = hkdf.derive(shared_secret_bytes)
+            key_material = hkdf.derive(shared_secret)
             encryption_key = key_material[:32]
             hmac_key = key_material[32:64]
             
@@ -87,12 +83,12 @@ class HandshakeHandler:
                 }
             }
             
-            print("HandShake OK")
+            logger.info("HandShake OK")
                         
             return response_data
             
         except Exception as e:
-            print(f"❌ Erro detalhado no handshake: {e}")
+            logger.error(f"❌ Erro detalhado no handshake: {e}")
             import traceback
             traceback.print_exc()
             
