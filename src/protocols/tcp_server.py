@@ -6,8 +6,6 @@ import json
 import logging
 from src.handlers.handshake_handler import HandshakeHandler
 from src.config.config import Config
-from src.database.database import Database
-from src.database.queries import Queries
 from src.handlers.auth_handler import AuthHandler
 from src.handlers.message_handler import MessageHandler
 from src.handlers.utils import create_response, DateTimeEncoder
