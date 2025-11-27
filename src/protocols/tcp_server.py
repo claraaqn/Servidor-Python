@@ -4,6 +4,7 @@ import socket
 import threading
 import json
 import logging
+from src.crypto.crypto_service import ServerCryptoService
 from src.handlers.handshake_handler import HandshakeHandler
 from src.config.config import Config
 from src.handlers.auth_handler import AuthHandler
@@ -21,11 +22,13 @@ class TCPClientHandler:
         self.user_id = None
         self.username = None
         self.authenticated = False
+        self.authenticated_user = None
         self.running = True
+        self.auth_handler = AuthHandler()
         self.handshake_handler = HandshakeHandler()
+        self.crypto_service = ServerCryptoService()
         self.session_id = None
-        self.encryption_enabled = False
-        
+        self.encryption_enabled = False     
 
 #? processamento incial
     def handle_client(self):
@@ -52,10 +55,10 @@ class TCPClientHandler:
                         data_json = json.loads(line)
                         action = data_json.get('action')
                         
-                        response = self.process_message(line, user_id, username)
+                        response = self.process_message(line, self.user_id, self.username)
                         self.send_response(response)
                         
-                        resp_data = json.loads(line)
+                        resp_data = json.loads(response) if isinstance(response, str) else response
                         
                         if resp_data.get('action') == 'login' and response.get('success'):
                             user_data = response.get('data', {}).get('user_data', {})
@@ -87,7 +90,6 @@ class TCPClientHandler:
     def process_message(self, raw_message, user_id, username):
         """
         Processa mensagens recebidas do cliente TCP.
-        O `raw_message` deve ser uma string JSON.
         """
         try:
             data = json.loads(raw_message)
@@ -95,6 +97,19 @@ class TCPClientHandler:
             
             if self.encryption_enabled and self._is_encrypted_message(data):
                 return self._handle_encrypted_message(data)
+            
+            no_auth_actions = [
+                'register', 'login', 'get_user_salt', 'handshake_init',
+                'initiate_challenge', 'verify_challenge'
+            ]
+            
+            if action not in no_auth_actions and not self.is_authenticated():
+                logger.warning(f"❌ Tentativa de ação {action} sem autenticação. Estado: {self.is_authenticated()}")
+                return {
+                    'success': False,
+                    'message': 'Usuário não autenticado',
+                    'action': None
+                }
 
             if action == 'register':
                 return self.handle_register(data)
@@ -118,6 +133,12 @@ class TCPClientHandler:
             
             elif action == 'send_message':
                 return self.handle_send_message(data)
+        
+            elif action == 'initiate_challenge':
+                return self.handle_initiate_challenge(data)
+
+            elif action == 'verify_challenge':
+                return self.handle_verify_challenge(data)
             
             elif action == 'get_conversation_history':
                 return self.handle_get_conversation_history(data)
@@ -144,13 +165,13 @@ class TCPClientHandler:
                 return self.handle_send_friend_request(data, self.user_id)
 
             elif action == 'get_friend_requests':
-                return self.handle_get_friend_requests(user_id)
+                return self.handle_get_friend_requests(self.user_id)
 
             elif action == 'respond_friend_request':
-                return self.handle_respond_friend_request(data, user_id)
+                return self.handle_respond_friend_request(data, self.user_id)
 
             elif action == 'get_friends_list':
-                return self.handle_get_friends_list(user_id)
+                return self.handle_get_friends_list(self.user_id)
 
             elif action in ['typing_start', 'typing_stop']:
                 is_typing = action == 'typing_start'
@@ -225,7 +246,108 @@ class TCPClientHandler:
         else:
             return create_response(False, f"Ação criptografada '{action}' não reconhecida")
 
+    def handle_initiate_challenge(self, data):
+        """Inicia desafio de autenticação"""
+        try:
+            username = data.get('username')
+            if not username:
+                return {
+                    'success': False,
+                    'message': "Username é obrigatório",
+                    'action': 'initiate_challenge_response'
+                }
+            
+            success, message, nonce = self.auth_handler.initiate_challenge(username)
+            
+            if success:
+                return {
+                    'success': True,
+                    'message': message,
+                    'action': 'initiate_challenge_response',  
+                    'data': {'nonce': nonce}
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': message,
+                    'action': 'initiate_challenge_response'
+                }
+                
+        except Exception as e:
+            logger.error(f"Erro no handle_initiate_challenge: {e}")
+            return {
+                'success': False,
+                'message': f"Erro interno: {str(e)}",
+                'action': 'initiate_challenge_response' 
+            }
+
+    def handle_verify_challenge(self, data):
+        """Verifica resposta do desafio"""
+        try:
+            username = data.get('username')
+            signature = data.get('signature')
+            
+            if not username or not signature:
+                return {
+                    'success': False,
+                    'message': "Username e signature são obrigatórios",
+                    'action': 'verify_challenge_response'
+                }
+            
+            success, message, user_data = self.auth_handler.verify_challenge_response(
+                username, signature, self)
+            
+            if success:
+                # Atualizar informações do usuário no handler
+                self.user_id = user_data['user_id']
+                self.username = user_data['username']
+                self.authenticated = True
+                
+                logger.info(f"Usuário {username} autenticado via desafio. user_id: {self.user_id}")
+                
+                return {
+                    'success': True,
+                    'message': message,
+                    'action': 'verify_challenge_response',
+                    'data': {'user_data': user_data}
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': message,
+                    'action': 'verify_challenge_response'
+                }
+                    
+        except Exception as e:
+            logger.error(f"Erro no handle_verify_challenge: {e}")
+            return {
+                'success': False,
+                'message': f"Erro interno: {str(e)}",
+                'action': 'verify_challenge_response'  
+        }
+
 #? handlers iniciais
+    def set_authenticated_user(self, user_id, username):
+        """Define o usuário autenticado para esta conexão"""
+        self.authenticated_user = {
+            'user_id': user_id,
+            'username': username,
+            'authenticated_at': datetime.datetime.now()
+        }
+        self.user_id = user_id
+        self.username = username
+        logger.info(f"Sessão autenticada - User: {username}, ID: {user_id}")
+    
+    def is_authenticated(self):
+        """Verifica se a conexão está autenticada"""
+        return self.authenticated_user is not None
+    
+    def clear_authentication(self):
+        """Limpa a autenticação"""
+        self.authenticated_user = None
+        self.user_id = None
+        self.username = None   
+        
     def handle_register(self, data):
         username = data.get('username')
         password = data.get('password')
@@ -361,8 +483,12 @@ class TCPClientHandler:
 
     def handle_get_friend_requests(self, user_id):
         """Handle getting friend requests"""
-        if not self.authenticated:
-            return create_response(False, "Usuário não autenticado")
+        if not self.is_authenticated():
+            return {
+                'success': False,
+                'message': 'Usuário não autenticado',
+                'action': 'get_friend_requests_response'
+            }
         
         requests = MessageHandler.get_friend_requests(user_id)
         
