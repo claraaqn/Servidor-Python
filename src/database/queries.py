@@ -65,8 +65,8 @@ class Queries:
     
     #! Queries de Amizades
     CREATE_FRIEND_REQUEST = """
-        INSERT INTO friend_requests (sender_id, receiver_id, status) 
-        VALUES (%s, %s, 'pending')
+        INSERT INTO friend_requests (sender_id, receiver_id, status, sender_public_key) 
+        VALUES (%s, %s, 'pending', %s)
     """
 
     GET_FRIEND_REQUESTS = """
@@ -75,7 +75,8 @@ class Queries:
             fr.sender_id,
             u.username as sender_username,
             fr.status,
-            fr.created_at
+            fr.created_at,
+            fr.sender_public_key
         FROM friend_requests fr
         JOIN users u ON fr.sender_id = u.id
         WHERE fr.receiver_id = %s AND fr.status = 'pending'
@@ -83,7 +84,7 @@ class Queries:
 
     UPDATE_FRIEND_STATUS = """
         UPDATE friend_requests 
-        SET status = %s
+        SET status = %s, receiver_public_key = %s
         WHERE id = %s
     """
 
