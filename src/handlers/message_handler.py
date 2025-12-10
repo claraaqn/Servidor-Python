@@ -137,7 +137,7 @@ class MessageHandler:
             return []
     
     @staticmethod
-    def send_friend_request(sender_id, receiver_username):
+    def send_friend_request(sender_id, receiver_username, public_key_sender):
         """
         Envia uma solicitação de amizade
         Retorna: (success, message)
@@ -146,7 +146,6 @@ class MessageHandler:
             connection = Database.get_connection()
             cursor = connection.cursor()
             
-            # Obtém ID do destinatário
             cursor.execute(Queries.GET_USER_ID, (receiver_username,))
             receiver_result = cursor.fetchone()
             
@@ -178,7 +177,7 @@ class MessageHandler:
             # Cria nova solicitação
             cursor.execute(
                 Queries.CREATE_FRIEND_REQUEST,
-                (sender_id, receiver_id)
+                (sender_id, receiver_id, public_key_sender)
             )
             
             connection.commit()
@@ -216,7 +215,7 @@ class MessageHandler:
             return []
 
     @staticmethod
-    def respond_friend_request(request_id, response):
+    def respond_friend_request(request_id, response, dhe_public_receiver):
         """
         Responde a uma solicitação de amizade (accept/reject)
         Retorna: (success, message)
@@ -228,7 +227,6 @@ class MessageHandler:
             connection = Database.get_connection()
             cursor = connection.cursor()
             
-            # Verifica se a solicitação existe e pertence ao usuário
             cursor.execute(
                 "SELECT id FROM friend_requests WHERE id = %s AND status = 'pending'",
                 (request_id,)
@@ -236,7 +234,8 @@ class MessageHandler:
             if not cursor.fetchone():
                 return False, "Solicitação não encontrada ou já respondida"
             
-            cursor.execute(Queries.UPDATE_FRIEND_STATUS, (response, request_id))
+            cursor.execute(Queries.UPDATE_FRIEND_STATUS, (
+                response, dhe_public_receiver, request_id))
             
             if cursor.rowcount == 0:
                 return False, "Solicitação não encontrada"

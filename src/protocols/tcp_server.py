@@ -462,19 +462,18 @@ class TCPClientHandler:
 #? amizade         
     def handle_send_friend_request(self, data, user_id):
         """Handle sending friend request"""
-        sender_id = data.get('user_id')
         
         receiver_username = data.get('receiver_username')
-        
-        if not self.authenticated:
-            return create_response(False, "Usuário não autenticado")
-        
-        receiver_username = data.get('receiver_username')
-        
+        public_key_sender = data.get("dhe_public_sender")
+                
         if not receiver_username:
             return create_response(False, "receiver_username é obrigatório")
         
-        success, message = MessageHandler.send_friend_request(user_id, receiver_username)
+        if not public_key_sender:
+            return create_response(False, "Chave pública Diffie-Hellman é obrigatória")
+        
+        success, message = MessageHandler.send_friend_request(
+            user_id, receiver_username, public_key_sender)
         return {
             'action': 'send_friend_request_response',
             'success': success,
@@ -500,9 +499,9 @@ class TCPClientHandler:
         }
      
     def handle_respond_friend_request(self, data, user_id):
-        # inicializa logo
         request_id = data.get('request_id')
-        reply_status = data.get('response')  # 'accepted' or 'rejected'
+        reply_status = data.get('response')
+        dhe_public_receiver = data.get("dhe_public")
 
         if not user_id:
             return create_response(False, "Usuário não autenticado")
@@ -511,14 +510,15 @@ class TCPClientHandler:
             return create_response(False, "request_id e response são obrigatórios")
 
         try:
-            success, message = MessageHandler.respond_friend_request(request_id, reply_status)
+            success, message = MessageHandler.respond_friend_request(
+                request_id, reply_status, dhe_public_receiver)
+            
             return {
                 'action': 'respond_friend_request_response',
                 'success': success,
                 'message': message
             }
         except Exception as e:
-            # aqui não use reply_status, use só request_id ou str(e)
             return {
                 'action': 'respond_friend_request_response',
                 'success': False,
