@@ -1,9 +1,11 @@
 import asyncio
 import datetime
+from datetime import datetime as dt
 import socket
 import threading
 import json
 import logging
+from src.database.database import Database
 from src.crypto.crypto_service import ServerCryptoService
 from src.handlers.handshake_handler import HandshakeHandler
 from src.config.config import Config
@@ -16,7 +18,7 @@ from src.protocols.websocket_server import websocket_loop
 logger = logging.getLogger(__name__)
 
 class TCPClientHandler:
-    def __init__(self, client_socket, address):
+    def __init__(self, client_socket, address, clients_dict):
         self.client_socket = client_socket
         self.address = address
         self.user_id = None
@@ -28,7 +30,9 @@ class TCPClientHandler:
         self.handshake_handler = HandshakeHandler()
         self.crypto_service = ServerCryptoService()
         self.session_id = None
-        self.encryption_enabled = False     
+        self.encryption_enabled = False
+        
+        self.clients_dict = clients_dict     
 
 #? processamento incial
     def handle_client(self):
@@ -68,6 +72,7 @@ class TCPClientHandler:
                             self.username = username
                             self.authenticated = True
                             tcp_connections[user_id] = self.client_socket
+                            self.server.clients[user_id] = self.client_socket
                             logger.info(f"👤 Usuário {username} (ID: {user_id}) autenticado via TCP")
                             
                         elif action in ['typing_start', 'typing_stop'] and user_id:
@@ -169,6 +174,9 @@ class TCPClientHandler:
 
             elif action == 'respond_friend_request':
                 return self.handle_respond_friend_request(data, self.user_id)
+            
+            elif action == "handshake_complete":
+                return self.handle_handshake_complete(data, user_id)
 
             elif action == 'get_friends_list':
                 return self.handle_get_friends_list(self.user_id)
@@ -304,6 +312,8 @@ class TCPClientHandler:
                 self.authenticated = True
                 
                 logger.info(f"Usuário {username} autenticado via desafio. user_id: {self.user_id}")
+                
+                self.clients_dict[self.user_id] = self
                 
                 return {
                     'success': True,
@@ -499,31 +509,120 @@ class TCPClientHandler:
         }
      
     def handle_respond_friend_request(self, data, user_id):
-        request_id = data.get('request_id')
+        reciverId = data.get('reciverId')
         reply_status = data.get('response')
         dhe_public_receiver = data.get("dhe_public")
 
         if not user_id:
             return create_response(False, "Usuário não autenticado")
 
-        if not request_id or not reply_status:
-            return create_response(False, "request_id e response são obrigatórios")
+        if not reciverId or not reply_status:
+            return create_response(False, "reciverId e response são obrigatórios")
 
         try:
             success, message = MessageHandler.respond_friend_request(
-                request_id, reply_status, dhe_public_receiver)
-            
+                reciverId, reply_status, dhe_public_receiver)
+                        
+            if success and reply_status == "accepted":
+                sender_id = message["sender_id"]
+                receiver_public_key = message["receiver_public_key"]
+                receiver_id = message["receiver_id"]
+                
+                data = {
+                    "action": "friend_request_accepted",
+                    "receiver_public_key": receiver_public_key,
+                    "receiver_id": receiver_id,
+                    "sender_id": sender_id
+                }
+                
+                self.send_to_user(sender_id, data)
+                
             return {
                 'action': 'respond_friend_request_response',
                 'success': success,
-                'message': message
+                'message': "Solicitação aceita com sucesso"
             }
+            
         except Exception as e:
             return {
                 'action': 'respond_friend_request_response',
                 'success': False,
                 'message': f"Erro ao processar solicitação: {e}"
             }
+            
+    def send_to_user(self, user_id, message):
+        """
+        Envia mensagem para um usuário específico - VERSÃO SIMPLES
+        """
+        try:
+            if user_id not in self.clients_dict:
+                print(f"Usuário {user_id} não está online")
+                return False
+            
+            target_client = self.clients_dict[user_id]
+            
+            message_json = json.dumps(message)
+            full_message = message_json + '\n'
+            target_client.client_socket.send(full_message.encode('utf-8'))
+            
+            
+            print(f"Mensagem enviada para {user_id}: {message.get('action', 'no-action')}")
+            return True
+            
+        except Exception as e:
+            print(f"Erro ao enviar para {user_id}: {e}")
+            if user_id in self.clients_dict:
+                del self.clients_dict[user_id]
+            return False
+                
+    def handle_handshake_complete(self, data, user_id):
+        reciverId = data.get("reciverId")
+        session_id = data.get("session_id")
+        salt = data.get("salt")
+        encryption_key = data.get("encryption_key")
+        hmac_key = data.get("hmac_key")
+        shared_secret = data.get("shared_secret")
+        
+        logger.info("HandShake entre clientes sendo realizado !!!!!!!")
+
+        if not reciverId:
+            return create_response(False, "reciverId é obrigatório")
+
+        try:
+            connection = Database.get_connection()
+            cursor = connection.cursor()
+
+            update_query = """
+                UPDATE friend_requests
+                SET 
+                    session_id = %s,
+                    session_key_encrypted = %s,
+                    iv = %s,
+                    handshake_data = %s,
+                    shared_secret = %s,
+                    handshake_status = 'completed',
+                    updated_at = NOW()
+                WHERE receiver_id = %s
+            """
+            
+            params = (
+                session_id,        
+                encryption_key,    
+                hmac_key,         
+                salt,              
+                shared_secret,     
+                reciverId
+            )
+            cursor.execute(update_query, params)
+
+            connection.commit()
+            
+            logger.info("HandShake finalizado !!!!!!!")
+
+            return create_response(True, "handshake_finalizado")
+
+        except Exception as e:
+            return create_response(False, f"Erro: {e}")
 
     def handle_get_friends_list(self, user_id):
         """Handle getting friends list"""
@@ -828,7 +927,6 @@ class TCPClientHandler:
     def send_response(self, response):
         """Envia resposta para o cliente, criptografando se necessário"""
         try:
-            # CORREÇÃO: Não criptografar respostas de handshake
             if (self.encryption_enabled and 
                 self.session_id and 
                 response.get('action') != 'handshake_response'):
@@ -854,6 +952,8 @@ class TCPClientHandler:
             logger.error(f"Erro ao enviar resposta: {e}")
 
 
+clients_dict = {}
+
 class TCPServer:
     def __init__(self):
         self.host = Config.TCP_HOST
@@ -876,7 +976,7 @@ class TCPServer:
             while self.running:
                 try:
                     client_socket, address = self.socket.accept()
-                    client_handler = TCPClientHandler(client_socket, address)
+                    client_handler = TCPClientHandler(client_socket, address, clients_dict)
                     
                     client_thread = threading.Thread(
                         target=client_handler.handle_client, 
