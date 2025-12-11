@@ -158,7 +158,6 @@ class MessageHandler:
             if sender_id == receiver_id:
                 return False, "Não é possível enviar solicitação para si mesmo"
             
-            # Verifica se já existe solicitação ou amizade
             cursor.execute(
                 Queries.CHECK_EXISTING_FRIENDSHIP,
                 (sender_id, receiver_id, receiver_id, sender_id)
@@ -174,7 +173,6 @@ class MessageHandler:
                 elif status == 'rejected':
                     return False, "Solicitação já foi rejeitada anteriormente"
             
-            # Cria nova solicitação
             cursor.execute(
                 Queries.CREATE_FRIEND_REQUEST,
                 (sender_id, receiver_id, public_key_sender)
@@ -228,22 +226,30 @@ class MessageHandler:
             cursor = connection.cursor()
             
             cursor.execute(
-                "SELECT id FROM friend_requests WHERE id = %s AND status = 'pending'",
+                """SELECT fr.id, fr.sender_id, fr.receiver_id, fr.status 
+                FROM friend_requests fr 
+                WHERE fr.id = %s AND fr.status = 'pending'""",
                 (request_id,)
             )
-            if not cursor.fetchone():
+            
+            row = cursor.fetchone()
+            
+            if not row:
                 return False, "Solicitação não encontrada ou já respondida"
+
+            request_id_db, sender_id, receiver_id, status = row
             
             cursor.execute(Queries.UPDATE_FRIEND_STATUS, (
                 response, dhe_public_receiver, request_id))
             
-            if cursor.rowcount == 0:
-                return False, "Solicitação não encontrada"
-            
             connection.commit()
             
-            action = "aceita" if response == 'accepted' else "rejeitada"
-            return True, f"Solicitação de amizade {action}"
+            return True, {
+                "request_id": request_id_db,
+                "sender_id": sender_id,
+                "receiver_id": receiver_id,
+                "receiver_public_key": dhe_public_receiver
+            }
             
         except mysql.connector.Error as e:
             error_message = f"Erro ao responder solicitação: {e}"
