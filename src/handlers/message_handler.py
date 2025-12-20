@@ -213,7 +213,7 @@ class MessageHandler:
             return []
 
     @staticmethod
-    def respond_friend_request(request_id, response, dhe_public_receiver):
+    def respond_friend_request(receiver_id, response, dhe_public_receiver):
         """
         Responde a uma solicitação de amizade (accept/reject)
         Retorna: (success, message)
@@ -228,8 +228,8 @@ class MessageHandler:
             cursor.execute(
                 """SELECT fr.id, fr.sender_id, fr.receiver_id, fr.status 
                 FROM friend_requests fr 
-                WHERE fr.id = %s AND fr.status = 'pending'""",
-                (request_id,)
+                WHERE fr.receiver_id = %s AND fr.status = 'pending'""",
+                (receiver_id,)
             )
             
             row = cursor.fetchone()
@@ -240,7 +240,7 @@ class MessageHandler:
             request_id_db, sender_id, receiver_id, status = row
             
             cursor.execute(Queries.UPDATE_FRIEND_STATUS, (
-                response, dhe_public_receiver, request_id))
+                response, dhe_public_receiver, request_id_db))
             
             connection.commit()
             

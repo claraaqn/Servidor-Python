@@ -72,6 +72,7 @@ class TCPClientHandler:
                             self.username = username
                             self.authenticated = True
                             tcp_connections[user_id] = self.client_socket
+                            self.clients_dict[self.user_id] = self
                             self.server.clients[user_id] = self.client_socket
                             logger.info(f"👤 Usuário {username} (ID: {user_id}) autenticado via TCP")
                             
@@ -108,14 +109,6 @@ class TCPClientHandler:
                 'initiate_challenge', 'verify_challenge'
             ]
             
-            if action not in no_auth_actions and not self.is_authenticated():
-                logger.warning(f"❌ Tentativa de ação {action} sem autenticação. Estado: {self.is_authenticated()}")
-                return {
-                    'success': False,
-                    'message': 'Usuário não autenticado',
-                    'action': None
-                }
-
             if action == 'register':
                 return self.handle_register(data)
 
@@ -133,7 +126,7 @@ class TCPClientHandler:
                 if response.get('success'):
                     self.session_id = response['data']['session_id']
                     self.encryption_enabled = True
-                    print(f"🛡️ Criptografia ativada para sessão: {self.session_id}")
+                    print(f"Criptografia ativada para sessão: {self.session_id}")
                 return response
             
             elif action == 'send_message':
@@ -185,6 +178,27 @@ class TCPClientHandler:
                 is_typing = action == 'typing_start'
                 self.handle_typing_indicator(data, user_id, username, is_typing)
                 return create_response(True, "Indicador de digitação enviado")
+            
+            auth_actions = [
+                "auth_challenge", 
+                "auth_response_and_challenge", 
+                "auth_final_verification",
+                "auth_complete"
+            ]
+
+            if action in auth_actions:
+                target_id = data.get("target_id")
+                if target_id:
+                    data['sender_id'] = self.user_id 
+                    # Envia para o amigo
+                    sent = self.send_to_user(target_id, data) 
+                    
+                    if sent:
+                        return create_response(True, "Sinal enviado ao destinatário")
+                    else:
+                        return create_response(False, "Usuário destino offline ou não encontrado")
+                
+                return create_response(False, "Target ID não fornecido")
 
             else:
                 return create_response(False, f"Ação '{action}' não reconhecida")
@@ -399,6 +413,8 @@ class TCPClientHandler:
             self.username = user_data['username']
             self.authenticated = True
             
+            self.clients_dict[self.user_id] = self
+            
             response_data['data'] = {'user_data': user_data} 
             
             logger.info(f"👤 Usuário {self.username} (ID: {self.user_id}) autenticado via TCP")
@@ -484,6 +500,7 @@ class TCPClientHandler:
         
         success, message = MessageHandler.send_friend_request(
             user_id, receiver_username, public_key_sender)
+
         return {
             'action': 'send_friend_request_response',
             'success': success,
@@ -511,7 +528,7 @@ class TCPClientHandler:
     def handle_respond_friend_request(self, data, user_id):
         reciverId = data.get('reciverId')
         reply_status = data.get('response')
-        dhe_public_receiver = data.get("dhe_public")
+        dhe_public_receiver = data.get("dhe_public_reciver")
 
         if not user_id:
             return create_response(False, "Usuário não autenticado")
@@ -618,8 +635,12 @@ class TCPClientHandler:
             connection.commit()
             
             logger.info("HandShake finalizado !!!!!!!")
+            
+            response = {
+                "reciverId": reciverId
+            }
 
-            return create_response(True, "handshake_finalizado")
+            return create_response(True, "Handshake Finalizado", response, "handshake_finalizado")
 
         except Exception as e:
             return create_response(False, f"Erro: {e}")
