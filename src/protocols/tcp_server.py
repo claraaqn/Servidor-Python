@@ -648,7 +648,7 @@ class TCPClientHandler:
                 "action": "chaves_para_b",
                 "encryption_key": encryption_key,
                 "hmac_key": hmac_key,
-                "id_friendship" :id_friendship
+                "id_friendship" : id_friendship
             }
             
             self.send_to_user(reciverId, message)
@@ -681,6 +681,7 @@ class TCPClientHandler:
         receiver_username = data.get('receiver_username')
         content = data.get('content')
         local_id = data.get('local_id')
+        id_friendship = data.get("id_friendship")
         
         logger.info(f"📨 Mensagem de {self.username} para {receiver_username}")
         
@@ -707,13 +708,14 @@ class TCPClientHandler:
                     "data": {
                         "message_id": None,  
                         "is_offline": False,
-                        "local_id": local_id
+                        "local_id": local_id,
+                        "id_friendship": id_friendship
                     }
                 }
         
         logger.info(f"💾 Salvando mensagem no banco")
         success, message, message_id = MessageHandler.send_message(
-            self.user_id, receiver_username, content
+            self.user_id, receiver_username, content, id_friendship
         )
         
         if success:
@@ -724,7 +726,8 @@ class TCPClientHandler:
                 "data": {
                     "message_id": message_id,
                     "is_offline": True,
-                    "local_id": local_id
+                    "local_id": local_id,
+                    "id_friendship": id_friendship
                 }
             }
         else:
@@ -746,7 +749,8 @@ class TCPClientHandler:
                 'content': data.get('content'),
                 'timestamp': datetime.datetime.now().isoformat(),
                 'is_delivered': True,
-                'message_type': 'real_time'
+                'message_type': 'real_time',
+                'id_friendship': data.get("id_friendship")
             }
             
             message_sent = False
