@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-from datetime import datetime as dt
+from datetime import datetime as dt, time
 import socket
 import threading
 import json
@@ -692,8 +692,7 @@ class TCPClientHandler:
         is_receiver_online = False
         
         if receiver_id:
-            is_receiver_online = (receiver_id in websocket_connections or 
-                                receiver_id in tcp_connections)
+            is_receiver_online = receiver_id in self.clients_dict
         
         if is_receiver_online:
             logger.info(f"✅ Destinatário online - entregando em tempo real SEM banco")
@@ -706,12 +705,14 @@ class TCPClientHandler:
                     "success": True,
                     "message": "Mensagem entregue em tempo real",
                     "data": {
-                        "message_id": None,  
+                        "message_id": int(time.time() * 1000),
                         "is_offline": False,
                         "local_id": local_id,
                         "id_friendship": id_friendship
                     }
                 }
+            else:
+                logger.warning("⚠️ Falha na entrega real-time, salvando no banco...")
         
         logger.info(f"💾 Salvando mensagem no banco")
         success, message, message_id = MessageHandler.send_message(
@@ -752,31 +753,10 @@ class TCPClientHandler:
                 'message_type': 'real_time',
                 'id_friendship': data.get("id_friendship")
             }
-            
-            message_sent = False
-                
-            if receiver_id in tcp_connections:                
-                try:
-                    message_json = json.dumps(real_time_msg, cls=DateTimeEncoder) + "\n"
-                    receiver_socket = tcp_connections[receiver_id]
-                    receiver_socket.sendall(message_json.encode('utf-8'))
-                    logger.info(f"✅ Mensagem entregue via TCP")
-                    message_sent = True
-                
-                except Exception as e:
-                    logger.error(f"❌ Erro TCP: {e}")
-                    if receiver_id in tcp_connections:
-                        del tcp_connections[receiver_id]
+                            
+            self.send_to_user(receiver_id, real_time_msg)
                         
-            if message_sent and data.get('db_message_id'):
-                db_message_id = data['db_message_id']
-                success = MessageHandler.delete_message_after_delivery(db_message_id)
-                if success:
-                    logger.info(f"🗑️ Mensagem {db_message_id} excluída do banco após entrega")
-                else:
-                    logger.warning(f"⚠️ Não foi possível excluir mensagem {db_message_id} do banco")
-            
-            return message_sent
+            return True
             
         except Exception as e:
             logger.error(f"💥 Erro ao entregar mensagem: {e}")
