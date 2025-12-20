@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class MessageHandler:
     @staticmethod
-    def send_message(sender_id, receiver_username, content):
+    def send_message(sender_id, receiver_username, content, id_friendship):
         """
         Envia uma mensagem de um usuário para outro
         Retorna: (success, message, message_id)
@@ -33,8 +33,8 @@ class MessageHandler:
             delivered = is_online
             
             cursor.execute(
-                "INSERT INTO messages (sender_id, receiver_id, content, timestamp, delivered) VALUES (%s, %s, %s, %s, %s)",
-                (sender_id, receiver_id, content, datetime.now(), 0)  # %s em vez de ?
+                "INSERT INTO messages (sender_id, receiver_id, content, timestamp, delivered, id_friendship) VALUES (%s, %s, %s, %s, %s, %s)",
+                (sender_id, receiver_id, content, datetime.now(), 0, id_friendship)
             )
             message_id = cursor.lastrowid
             
@@ -85,7 +85,7 @@ class MessageHandler:
             cursor = connection.cursor(dictionary=True)
             
             cursor.execute("""
-                SELECT id, sender_id, receiver_id, content, timestamp 
+                SELECT id, sender_id, receiver_id, content, timestamp, id_friendship 
                 FROM messages 
                 WHERE receiver_id = %s AND delivered = 0
                 ORDER BY timestamp ASC
@@ -94,12 +94,13 @@ class MessageHandler:
             messages = []
             for row in cursor.fetchall():
                 messages.append({
-                'id': row['id'], 
-                'sender_id': row['sender_id'],
-                'receiver_id': row['receiver_id'],
-                'content': row['content'],
-                'timestamp': row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp'])
-            })
+                    'id': row['id'], 
+                    'sender_id': row['sender_id'],
+                    'receiver_id': row['receiver_id'],
+                    'content': row['content'],
+                    'id_friendship': row['id_friendship'],
+                    'timestamp': row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp'])
+                })
         
             connection.close()
             return messages
