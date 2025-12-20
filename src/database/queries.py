@@ -90,8 +90,12 @@ class Queries:
 
     GET_FRIENDS_LIST = """
         SELECT 
-            u.id,
+            u.id AS user_id,
             u.username,
+            fr.id AS id_friendship,
+            fr.sender_public_key,
+            fr.receiver_public_key,
+            fr.sender_id AS requester_id,
             fr.created_at,
             us.is_online,
             us.last_seen
@@ -104,6 +108,7 @@ class Queries:
         WHERE fr.status = 'accepted'
         ORDER BY u.username
     """
+    
     CHECK_EXISTING_FRIENDSHIP = """
         SELECT id, status 
         FROM friend_requests 
