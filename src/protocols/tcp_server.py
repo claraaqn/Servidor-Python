@@ -524,6 +524,7 @@ class TCPClientHandler:
                 reciverId, reply_status, dhe_public_receiver)
                         
             if success and reply_status == "accepted":
+                id_friendship = message["request_id"]
                 sender_id = message["sender_id"]
                 receiver_public_key = message["receiver_public_key"]
                 receiver_id = message["receiver_id"]
@@ -532,7 +533,8 @@ class TCPClientHandler:
                     "action": "friend_request_accepted",
                     "receiver_public_key": receiver_public_key,
                     "receiver_id": receiver_id,
-                    "sender_id": sender_id
+                    "sender_id": sender_id,
+                    "id_friendship": id_friendship
                 }
                 
                 self.send_to_user(sender_id, data)
@@ -583,6 +585,8 @@ class TCPClientHandler:
         hmac_key = data.get("hmac_key")
         shared_secret = data.get("shared_secret")
         
+        id_friendship = data.get("id_friendship")
+        
         logger.info("HandShake entre clientes sendo realizado !!!!!!!")
 
         if not reciverId:
@@ -618,8 +622,21 @@ class TCPClientHandler:
             connection.commit()
             
             logger.info("HandShake finalizado !!!!!!!")
+            
+            response = {
+                "reciverId": reciverId,
+            }
+            
+            message = {
+                "action": "chaves_para_b",
+                "encryption_key": encryption_key,
+                "hmac_key": hmac_key,
+                "id_friendship" :id_friendship
+            }
+            
+            self.send_to_user(reciverId, message)
 
-            return create_response(True, "handshake_finalizado")
+            return create_response(True, "Handshake Finalizado", response, "handshake_finalizado")
 
         except Exception as e:
             return create_response(False, f"Erro: {e}")
