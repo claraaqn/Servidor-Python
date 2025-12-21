@@ -652,7 +652,8 @@ class TCPClientHandler:
                 "action": "chaves_para_b",
                 "encryption_key": encryption_key,
                 "hmac_key": hmac_key,
-                "id_friendship" : id_friendship
+                "id_friendship" : id_friendship,
+                "friend_id": user_id
             }
             
             self.send_to_user(reciverId, message)
