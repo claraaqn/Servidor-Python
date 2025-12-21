@@ -40,7 +40,7 @@ class MessageHandler:
             
             connection.commit()
             
-            logger.info(f"💬 Mensagem {message_id} enviada de {sender_id} para {receiver_username} (delivered: {delivered})")
+            logger.info(f"Mensagem {message_id} enviada de {sender_id} para {receiver_username} (delivered: {delivered})")
             return True, "Mensagem enviada com sucesso", message_id
             
         except mysql.connector.Error as e:
@@ -303,14 +303,12 @@ class MessageHandler:
             cursor.close()
             
             if result:
-                logger.info(f"✅ ID da mensagem encontrado: {result['id']}")
                 return result['id']
             else:
-                logger.warning("⚠️ Nenhuma mensagem encontrada para obter ID")
                 return None
             
         except Exception as e:
-            logger.error(f"❌ Erro ao buscar ID da mensagem: {e}")
+            logger.error(f"Erro ao buscar ID da mensagem: {e}")
             return None
 
     @staticmethod
@@ -335,13 +333,13 @@ class MessageHandler:
             conn.close()
             
             if deleted:
-                logger.info(f"🗑️ Mensagem {message_id} EXCLUÍDA do banco após entrega")
+                logger.info(f"Mensagem {message_id} EXCLUÍDA do banco após entrega")
                 return True
             else:
-                logger.warning(f"⚠️ Mensagem {message_id} não foi excluída (não encontrada ou não entregue)")
+                logger.warning(f"Mensagem {message_id} não foi excluída (não encontrada ou não entregue)")
                 return False
             
         except Exception as e:
-            logger.error(f"❌ Erro ao marcar mensagem {message_id} como entregue: {e}")
+            logger.error(f"Erro ao marcar mensagem {message_id} como entregue: {e}")
             return False
     

@@ -108,7 +108,6 @@ class AuthHandler:
         Verifica a resposta do desafio (assinatura do nonce)
         """
         try:
-            # Verificar se existe desafio pendente
             if username not in self._pending_challenges:
                 logger.error(f"Desafio não encontrado para usuário: {username}")
                 return False, "Desafio não encontrado ou expirado", None
@@ -117,29 +116,23 @@ class AuthHandler:
             nonce = challenge['nonce']
             timestamp = challenge['timestamp']
             
-            # Verificar expiração (5 minutos)
             if (datetime.datetime.now() - timestamp).total_seconds() > 300:
                 del self._pending_challenges[username]
                 return False, "Desafio expirado", None
             
-            # Obter chave pública do usuário
             public_key = self.get_user_public_key_by_username(username)
             if not public_key:
                 logger.error(f"Chave pública não encontrada para usuário: {username}")
                 return False, "Chave pública não encontrada", None
             
-            # Decodificar chave pública e assinatura
             try:
                 public_key_bytes = base64.b64decode(public_key)
                 signature = base64.b64decode(signature_b64)
                 
-                # Carregar chave pública Ed25519
                 public_key_obj = ed25519.Ed25519PublicKey.from_public_bytes(public_key_bytes)
                 
-                # Verificar assinatura
                 public_key_obj.verify(signature, nonce)
                 
-                # Assinatura válida - autenticar usuário
                 user_data = self._authenticate_user_after_challenge(username)
                 
                 if client_handler and user_data:
@@ -148,7 +141,6 @@ class AuthHandler:
                         user_data['username']
                     )
                 
-                # Limpar desafio usado
                 del self._pending_challenges[username]
                 
                 logger.info(f"Autenticação por desafio bem-sucedida para {username}")
@@ -157,7 +149,6 @@ class AuthHandler:
             except InvalidSignature as e:
                 logger.warning(f"Assinatura inválida para usuário {username}: {e}")
                 
-                # DEBUG: Tentar verificar com diferentes métodos
                 self._debug_signature_verification(nonce, signature, public_key_bytes)
                 
                 return False, "Assinatura inválida", None
@@ -175,7 +166,6 @@ class AuthHandler:
         """Método de debug para verificação de assinatura"""
         try:
             
-            # Verificar se os tamanhos estão corretos
             if len(signature) != 64:
                 logger.error(f" Tamanho da assinatura incorreto: esperado 64, obtido {len(signature)}")
             
@@ -200,7 +190,6 @@ class AuthHandler:
             
             user_id = user['id']
             
-            # Atualizar status para online
             cursor.execute(Queries.UPDATE_USER_STATUS, (True, None, user_id))
             con.commit()
             
@@ -282,6 +271,62 @@ class AuthHandler:
                 return False, "Senha incorreta", None
         except Exception as e:
             return False, f"Erro: {e}", None  
+        
+    @staticmethod
+    def authenticate_new_device(username, password, new_public_key):
+        try:
+            con = Database.get_connection()
+            cursor = con.cursor(dictionary=True)
+            
+            cursor.execute("SELECT id, username, password, salt FROM users WHERE username = %s", (username,))
+            user = cursor.fetchone()
+            
+            if not user:
+                return False, "Usuário não encontrado", None
+            
+            stored_hash = user['password']
+            stored_salt = user['salt']
+            
+            from argon2 import PasswordHasher
+            ph = PasswordHasher()
+            
+            try:
+                ph.verify(stored_hash, password + stored_salt)
+                
+                user_id = user['id']
+                cursor.execute("UPDATE users SET public_key = %s WHERE id = %s", (new_public_key, user_id))
+                con.commit()
+                
+                return True, "Sucesso", user
+            except Exception as e:
+                logger.error(f"Erro: {e}")
+        except Exception as e:
+            logger.error(f"Erro: {e}")
+        
+    @staticmethod
+    def get_online_friends_ids(user_id):
+        """
+        Retorna uma lista de IDs de amigos que estão atualmente online.
+        """
+        try:
+            con = Database.get_connection()
+            cursor = con.cursor()
+            
+            query = """
+                SELECT u.id 
+                FROM friendships f
+                JOIN users u ON (f.user_id_1 = u.id OR f.user_id_2 = u.id)
+                WHERE (f.user_id_1 = %s OR f.user_id_2 = %s)
+                AND u.id != %s
+                AND u.is_online = TRUE
+            """
+            cursor.execute(query, (user_id, user_id, user_id))
+            
+            friends = [row[0] for row in cursor.fetchall()]
+            return friends
+        except Exception as e:
+            logger.error(f"Erro ao buscar IDs de amigos online: {e}")
+            return []
         
     @staticmethod
     def get_user_public_key(user_id):

@@ -24,11 +24,9 @@ class HandshakeHandler:
             salt_b64 = data.get('salt')
             request_id = data.get('request_id')
             
-            # 1. Servidor gera par DHE 
             server_private_key = x25519.X25519PrivateKey.generate()
             server_public_key = server_private_key.public_key()
                         
-            # 2. Decodifica chave pública do cliente
             client_public_key_bytes = base64.b64decode(client_public_key_b64)
             
             if len(client_public_key_bytes) != 32:
@@ -36,10 +34,8 @@ class HandshakeHandler:
             
             client_public_key = x25519.X25519PublicKey.from_public_bytes(client_public_key_bytes)
             
-            # 3. Calcula segredo compartilhado
             shared_secret = server_private_key.exchange(client_public_key)
             
-            # 4. Deriva chaves de sessão com HKDF
             salt = base64.b64decode(salt_b64)
             
             hkdf = HKDF(
@@ -54,7 +50,6 @@ class HandshakeHandler:
             encryption_key = key_material[:32]
             hmac_key = key_material[32:64]
             
-            # 5. Armazena chaves de sessão
             session_id = self._generate_session_id()
             self._session_keys[session_id] = {
                 'encryption_key': encryption_key,
@@ -62,10 +57,8 @@ class HandshakeHandler:
                 'salt': salt_b64
             }
             
-            # 6. Configura chaves no serviço de criptografia
             self.crypto_service.set_session_keys(session_id, encryption_key, hmac_key)
             
-            # 7. Codifica chave pública do servidor
             server_pub_bytes = server_public_key.public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
