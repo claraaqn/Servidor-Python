@@ -1,5 +1,4 @@
 class Queries:
-    # Queries de Usuário
     CHECK_USER_EXISTS = "SELECT id FROM users WHERE username = %s"
     CREATE_USER = "INSERT INTO users (username, password, public_key, salt) VALUES (%s, %s, %s, %s)"    
     GET_USER_BY_USERNAME = "SELECT id, username, password, public_key, salt, created_at FROM users WHERE username = %s"
@@ -7,7 +6,6 @@ class Queries:
     GET_USER_ID = "SELECT id FROM users WHERE username = %s"
     GET_ALL_USERS = "SELECT id, username, public_key, created_at, updated_at FROM users WHERE id != %s"
     
-    # Queries de Status do Usuário
     CREATE_USER_STATUS = "INSERT INTO user_status (user_id, is_online) VALUES (%s, %s)"
     UPDATE_USER_STATUS = "UPDATE user_status SET is_online=%s, last_seen=%s WHERE user_id=%s"
 
@@ -19,7 +17,6 @@ class Queries:
         WHERE us.is_online = TRUE AND u.id != %s
     """
     
-    # Queries de Mensagens
     INSERT_MESSAGE = """
         INSERT INTO messages (sender_id, receiver_id, content) 
         VALUES (%s, %s, %s)
@@ -37,7 +34,6 @@ class Queries:
         LIMIT %s
     """
     
-    # Queries para mensagens pendentes (usando a coluna 'delivered')
     GET_UNDELIVERED_MESSAGES = """
         SELECT m.id, m.sender_id, m.receiver_id, m.content, m.timestamp,
                u.username as sender_username
@@ -63,7 +59,6 @@ class Queries:
         ORDER BY us.is_online DESC, u.username ASC
     """
     
-    #! Queries de Amizades
     CREATE_FRIEND_REQUEST = """
         INSERT INTO friend_requests (sender_id, receiver_id, status, sender_public_key) 
         VALUES (%s, %s, 'pending', %s)
@@ -113,4 +108,17 @@ class Queries:
         SELECT id, status 
         FROM friend_requests 
         WHERE (sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)
+    """
+    
+    UPDATE_USER_PUBLIC_KEY = "UPDATE users SET public_key = %s WHERE id = %s"
+    
+    DELETE_USER_PENDING_MESSAGES = "DELETE FROM messages WHERE receiver_id = %s AND is_delivered = FALSE"
+    
+    GET_ONLINE_FRIENDS_OF_USER = """
+        SELECT u.id 
+        FROM friendships f
+        JOIN users u ON (f.user_id_1 = u.id OR f.user_id_2 = u.id)
+        WHERE (f.user_id_1 = %s OR f.user_id_2 = %s)
+        AND u.id != %s
+        AND u.is_online = TRUE
     """

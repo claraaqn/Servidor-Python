@@ -40,7 +40,7 @@ class TCPClientHandler:
         user_id = None
         username = None
         try:
-            logger.info(f"🔌 Nova conexão TCP de {self.address}")
+            logger.info(f"Nova conexão TCP de {self.address}")
 
             while self.running:
                 data = self.client_socket.recv(4096)
@@ -56,29 +56,24 @@ class TCPClientHandler:
                         continue
 
                     try:
-                        data_json = json.loads(line)
-                        action = data_json.get('action')
-                        
                         response = self.process_message(line, self.user_id, self.username)
                         self.send_response(response)
                         
-                        resp_data = json.loads(response) if isinstance(response, str) else response
+                        resp_data = response if isinstance(response, dict) else json.loads(response)
                         
-                        if resp_data.get('action') == 'login' and response.get('success'):
-                            user_data = response.get('data', {}).get('user_data', {})
-                            user_id = user_data.get('user_id')
-                            username = user_data.get('username')
-                            self.user_id = user_id
-                            self.username = username
-                            self.authenticated = True
-                            tcp_connections[user_id] = self.client_socket
-                            self.clients_dict[self.user_id] = self
-                            self.server.clients[user_id] = self.client_socket
-                            logger.info(f"👤 Usuário {username} (ID: {user_id}) autenticado via TCP")
+                        login_actions = ['login_response', 'login_new_device_response', 'verify_challenge_response']
+                        
+                        if resp_data.get('action') in login_actions and resp_data.get('success'):
+                            user_data = resp_data.get('data', {}).get('user_data', {})
                             
-                        elif action in ['typing_start', 'typing_stop'] and user_id:
-                            is_typing = action == 'typing_start'
-                            self.handle_typing_indicator(data_json, user_id, username, is_typing)
+                            self.user_id = user_data.get('user_id')
+                            self.username = user_data.get('username')
+                            self.authenticated = True
+                            
+                            self.clients_dict[self.user_id] = self
+                            tcp_connections[self.user_id] = self.client_socket
+                            
+                            logger.info(f"Sessão vinculada: {self.username} (ID: {self.user_id})")
                     
                     except json.JSONDecodeError:
                         error_response = create_response(False, "JSON inválido")
@@ -93,7 +88,7 @@ class TCPClientHandler:
         finally:
             self.cleanup()
 
-    def process_message(self, raw_message, user_id, username):
+    def process_message(self, raw_message, user_id_arg, username_arg):
         """
         Processa mensagens recebidas do cliente TCP.
         """
@@ -101,19 +96,20 @@ class TCPClientHandler:
             data = json.loads(raw_message)
             action = data.get('action')
             
+            effective_user_id = self.user_id if self.user_id else user_id_arg
+            effective_username = self.username if self.username else username_arg
+            
             if self.encryption_enabled and self._is_encrypted_message(data):
                 return self._handle_encrypted_message(data)
-            
-            no_auth_actions = [
-                'register', 'login', 'get_user_salt', 'handshake_init',
-                'initiate_challenge', 'verify_challenge'
-            ]
             
             if action == 'register':
                 return self.handle_register(data)
 
             elif action == 'login':
                 return self.handle_login(data)
+            
+            elif action == 'login_new_device':
+                return self.handle_login_new_device(data)
             
             elif action == 'get_user_salt':
                 return self.handle_get_user_salt(data)
@@ -160,23 +156,23 @@ class TCPClientHandler:
                 return self.handle_get_contacts(data)
 
             elif action == 'send_friend_request':
-                return self.handle_send_friend_request(data, self.user_id)
+                return self.handle_send_friend_request(data, effective_user_id)
 
             elif action == 'get_friend_requests':
-                return self.handle_get_friend_requests(self.user_id)
+                return self.handle_get_friend_requests(effective_user_id)
 
             elif action == 'respond_friend_request':
-                return self.handle_respond_friend_request(data, self.user_id)
+                return self.handle_respond_friend_request(data, effective_user_id)
             
             elif action == "handshake_complete":
-                return self.handle_handshake_complete(data, user_id)
+                return self.handle_handshake_complete(data, effective_user_id)
 
             elif action == 'get_friends_list':
-                return self.handle_get_friends_list(self.user_id)
+                return self.handle_get_friends_list(effective_user_id)
 
             elif action in ['typing_start', 'typing_stop']:
                 is_typing = action == 'typing_start'
-                self.handle_typing_indicator(data, user_id, username, is_typing)
+                self.handle_typing_indicator(data, effective_user_id, effective_username, is_typing)
                 return create_response(True, "Indicador de digitação enviado")
             
             auth_actions = [
@@ -189,9 +185,8 @@ class TCPClientHandler:
             if action in auth_actions:
                 target_id = data.get("target_id")
                 if target_id:
-                    data['sender_id'] = self.user_id 
-                    # Envia para o amigo
-                    sent = self.send_to_user(target_id, data) 
+                    data['sender_id'] = effective_user_id 
+                    sent = self.send_to_user(target_id, data)
                     
                     if sent:
                         return create_response(True, "Sinal enviado ao destinatário")
@@ -222,7 +217,6 @@ class TCPClientHandler:
             
             crypto_service = self.handshake_handler.get_crypto_service()
             
-            # Descriptografa a mensagem
             encrypted_payload = {
                 'ciphertext': data['ciphertext'],
                 'hmac': data['hmac']
@@ -233,11 +227,10 @@ class TCPClientHandler:
             
             logger.info(f"Mensagem descriptografada: {decrypted_data.get('action')}")
             
-            # Processa a mensagem descriptografada
             return self.process_decrypted_message(decrypted_data)
             
         except Exception as e:
-            logger.error(f"❌ Erro ao processar mensagem criptografada: {e}")
+            logger.error(f"Erro ao processar mensagem criptografada: {e}")
             return create_response(False, f"Erro de criptografia: {str(e)}")
     
     def process_decrypted_message(self, decrypted_data):
@@ -246,7 +239,6 @@ class TCPClientHandler:
         user_id = self.user_id
         username = self.username
         
-        # Reprocessa as ações com os dados descriptografados
         if action == 'send_message':
             return self.handle_send_message(decrypted_data)
         
@@ -326,7 +318,6 @@ class TCPClientHandler:
                 username, signature, self)
             
             if success:
-                # Atualizar informações do usuário no handler
                 self.user_id = user_data['user_id']
                 self.username = user_data['username']
                 self.authenticated = True
@@ -415,20 +406,99 @@ class TCPClientHandler:
         }
         
         if success:
-            self.user_id = user_data['user_id']
+            user_id = user_data['user_id']
+            
+            if user_id in self.clients_dict:
+                old_handler = self.clients_dict.get(user_id)
+                if old_handler and old_handler != self:
+                    logger.info(f"Derrubando conexão antiga de {user_id}")
+                    try:
+                        old_handler.send_response({
+                            'action': 'force_logout',
+                            'message': 'Sua conta foi acessada em outro dispositivo.'
+                        })
+                        old_handler.running = False
+                    except Exception as e:
+                        logger.error(f"Erro ao derrubar antigo: {e}")
+
+            self.user_id = user_id
+            self.username = user_data['username']
+            self.authenticated = True
+            self.clients_dict[user_id] = self
+            tcp_connections[user_id] = self.client_socket
+            
+            response_data['data'] = {'user_data': user_data}
+            logger.info(f"👤 Usuário {self.username} (ID: {self.user_id}) autenticado via TCP")
+            return response_data 
+            
+        return response_data 
+        
+    def handle_login_new_device(self, data):
+        username = data.get('username')
+        password = data.get('password')
+        new_public_key = data.get('new_public_key')
+        request_id = data.get('request_id')
+        
+        success, message, user_data = AuthHandler.authenticate_new_device(username, password, new_public_key)
+        
+        if success:
+            user_id = user_data.get('id') or user_data.get('user_id')
+            
+            if not user_id:
+                logger.error(f"Erro: user_id não encontrado no retorno do banco para {username}")
+                return create_response(False, "Erro ao recuperar ID do usuário", action='login_new_device_response')
+
+            if user_id in self.clients_dict:
+                old_handler = self.clients_dict.get(user_id)
+                if old_handler and old_handler != self:
+                    try:
+                        old_handler.send_response({
+                            'action': 'force_logout',
+                            'message': 'As chaves de segurança foram alteradas em outro dispositivo.'
+                        })
+                        old_handler.running = False
+                    except:
+                        pass
+
+            self.user_id = user_id
             self.username = user_data['username']
             self.authenticated = True
             
-            self.clients_dict[self.user_id] = self
+            self.clients_dict[user_id] = self
+            tcp_connections[user_id] = self.client_socket
             
-            response_data['data'] = {'user_data': user_data} 
+            self.notificar_troca_de_chave(user_id, new_public_key)
             
-            logger.info(f"👤 Usuário {self.username} (ID: {self.user_id}) autenticado via TCP")
-           
-            return response_data
-            
+            formatted_user_data = {
+                'user_id': user_id,
+                'username': self.username,
+                'public_key': new_public_key
+            }
+
+            return {
+                'success': True,
+                'message': "Chaves atualizadas com sucesso",
+                'action': 'login_new_device_response',
+                'request_id': request_id,
+                'data': {'user_data': formatted_user_data}
+            }
         else:
-            return response_data
+            return {
+                'success': False,
+                'message': message,
+                'action': 'login_new_device_response',
+                'request_id': request_id
+            }
+
+    def notificar_troca_de_chave(self, user_id, new_key):
+        friends_ids = AuthHandler.get_online_friends_ids(user_id)
+        notification = {
+            'action': 'friend_key_updated',
+            'friend_id': user_id,
+            'new_public_key': new_key
+        }
+        for f_id in friends_ids:
+            self.send_to_user(f_id, notification)
 
     def handle_get_user_salt(self, data):
         """
@@ -449,7 +519,7 @@ class TCPClientHandler:
         if success:
             response_data['data'] = {'salt': salt}
         else:
-            print(f"❌ SALT NÃO ENCONTRADO: {message}")
+            print(f"SALT NÃO ENCONTRADO: {message}")
         
         return response_data
     
@@ -466,30 +536,24 @@ class TCPClientHandler:
         return create_response(success, message)    
     
     def cleanup(self):
-        """Limpeza quando cliente desconecta"""
-        if self.encryption_enabled and self.session_id:
-            # Remove chaves de sessão
-            self.handshake_handler.get_crypto_service().remove_session_keys(self.session_id)
-            print(f"🔑 Chaves de sessão removidas: {self.session_id}")
-        
-        if self.authenticated and self.user_id:
-            # Atualiza status para offline
-            try:
+        """Limpeza segura"""
+        try:
+            if self.user_id and self.clients_dict.get(self.user_id) == self:
                 from src.database.database import Database
                 from src.database.queries import Queries
-                
-                if self.user_id in tcp_connections:
-                    del tcp_connections[self.user_id]
                 
                 connection = Database.get_connection()
                 cursor = connection.cursor()
                 cursor.execute(Queries.UPDATE_USER_STATUS, (False, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.user_id))
                 connection.commit()
-            except Exception as e:
-                logger.error(f"Erro ao atualizar status: {e}")
-        
-        self.client_socket.close()
-        logger.info(f"🔌 Cliente {self.address} desconectado")  
+                
+                if self.user_id in tcp_connections:
+                    del tcp_connections[self.user_id]
+                del self.clients_dict[self.user_id]
+        except Exception as e:
+            logger.error(f"Erro no cleanup: {e}")
+        finally:
+            self.client_socket.close()
     
 #? amizade         
     def handle_send_friend_request(self, data, user_id):
@@ -515,12 +579,8 @@ class TCPClientHandler:
 
     def handle_get_friend_requests(self, user_id):
         """Handle getting friend requests"""
-        if not self.is_authenticated():
-            return {
-                'success': False,
-                'message': 'Usuário não autenticado',
-                'action': 'get_friend_requests_response'
-            }
+        if not user_id:
+            return create_response(False, "Usuário não autenticado para esta operação")
         
         requests = MessageHandler.get_friend_requests(user_id)
         
@@ -762,7 +822,7 @@ class TCPClientHandler:
             return True
             
         except Exception as e:
-            logger.error(f"💥 Erro ao entregar mensagem: {e}")
+            logger.error(f"Erro ao entregar mensagem: {e}")
             return False  
     
     def handle_get_pending_messages(self, data):
@@ -781,7 +841,7 @@ class TCPClientHandler:
             }
             
         except Exception as e:
-            logger.error(f"❌ Erro ao buscar mensagens pendentes: {e}")
+            logger.error(f"Erro ao buscar mensagens pendentes: {e}")
             return create_response(False, f"Erro ao buscar mensagens pendentes: {e}")
 
     def handle_confirm_message_delivery(self, data):
@@ -797,7 +857,7 @@ class TCPClientHandler:
             success = MessageHandler.mark_message_as_delivered(message_id)
         
             if success:
-                logger.info(f"🗑️ Mensagem {message_id} excluída do servidor após entrega")
+                logger.info(f"Mensagem {message_id} excluída do servidor após entrega")
                 return {
                     "action": "confirm_delivery_response",
                     "success": True,
@@ -806,7 +866,7 @@ class TCPClientHandler:
             else:
                 return create_response(False, "Erro ao excluir mensagem")
         except Exception as e:
-            logger.error(f"❌ Erro ao confirmar entrega: {e}")
+            logger.error(f"Erro ao confirmar entrega: {e}")
             return create_response(False, f"Erro ao confirmar entrega: {e}")
    
     def handle_get_conversation_history(self, data):
@@ -819,7 +879,6 @@ class TCPClientHandler:
         if not other_username:
             return create_response(False, "other_username é obrigatório")
         
-        # 🟢 SIMPLIFICAÇÃO: Buscar todas sem filtros complexos
         messages = MessageHandler.get_conversation_history_by_username(
             self.user_id, other_username, limit
         )
@@ -931,44 +990,46 @@ class TCPClientHandler:
                     receiver_ws.send(json.dumps(typing_msg, cls=DateTimeEncoder)),
                     websocket_loop
                 )
-                logger.debug(f"✍️ Indicador de digitação enviado (WebSocket) para {receiver_username}")
 
             elif receiver_id in tcp_connections:
                 receiver_socket = tcp_connections[receiver_id]
                 message_json = json.dumps(typing_msg) + "\n"
                 receiver_socket.sendall(message_json.encode('utf-8'))
-                logger.debug(f"✍️ Indicador de digitação enviado (TCP) para {receiver_username}")
 
         except Exception as e:
             logger.error(f"Erro ao enviar indicador de digitação via TCP: {e}")
     
 #? respota ao cliente
     def send_response(self, response):
-        """Envia resposta para o cliente, criptografando se necessário"""
-        try:
-            if (self.encryption_enabled and 
-                self.session_id and 
-                response.get('action') != 'handshake_response'):
+            try:
+                if response is None:
+                    logger.warning("Tentativa de enviar resposta nula ignorada.")
+                    return
+
+                if isinstance(response, str):
+                    resp_obj = json.loads(response)
+                else:
+                    resp_obj = response
+
+                if (self.encryption_enabled and self.session_id and 
+                    resp_obj.get('action') != 'handshake_response'):
+                    
+                    crypto_service = self.handshake_handler.get_crypto_service()
+                    response_json = json.dumps(resp_obj, cls=DateTimeEncoder)
+                    encrypted_payload = crypto_service.encrypt_message(self.session_id, response_json)
+                    
+                    final_response = {
+                        'action': 'encrypted_message',
+                        **encrypted_payload
+                    }
+                else:
+                    final_response = resp_obj
+
+                message_to_send = json.dumps(final_response, cls=DateTimeEncoder) + '\n'
+                self.client_socket.sendall(message_to_send.encode('utf-8'))
                 
-                # Criptografa apenas mensagens que NÃO são handshake
-                crypto_service = self.handshake_handler.get_crypto_service()
-                response_json = json.dumps(response, cls=DateTimeEncoder)
-                encrypted_response = crypto_service.encrypt_message(self.session_id, response_json)
-                
-                # Envia como mensagem criptografada
-                final_response = {
-                    'action': 'encrypted_message',
-                    **encrypted_response
-                }
-                response_json = json.dumps(final_response, cls=DateTimeEncoder) + '\n'
-            else:
-                # Envia resposta normal (incluindo handshake_response)
-                response_json = json.dumps(response, cls=DateTimeEncoder) + '\n'
-            
-            self.client_socket.send(response_json.encode('utf-8'))
-            
-        except Exception as e:
-            logger.error(f"Erro ao enviar resposta: {e}")
+            except Exception as e:
+                logger.error(f"Erro ao enviar resposta: {e}")
 
 
 clients_dict = {}
@@ -990,7 +1051,7 @@ class TCPServer:
             self.socket.listen(5)
             self.running = True
             
-            logger.info(f"🐍 Servidor TCP ouvindo em {self.host}:{self.port}")
+            logger.info(f"Servidor TCP ouvindo em {self.host}:{self.port}")
             
             while self.running:
                 try:
@@ -1016,4 +1077,4 @@ class TCPServer:
         self.running = False
         if self.socket:
             self.socket.close()
-        logger.info("🛑 Servidor TCP parado")
+        logger.info("Servidor TCP parado")

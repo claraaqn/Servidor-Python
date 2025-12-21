@@ -13,10 +13,9 @@ class FriendsHandler:
             cursor.execute(Queries.GET_FRIENDS, (user_id, user_id, user_id))
             friends = cursor.fetchall()
             
-            # ⬇️ CONVERTE datetime para string ISO format
             for friend in friends:
                 for key, value in friend.items():
-                    if hasattr(value, 'isoformat'):  # Verifica se é datetime
+                    if hasattr(value, 'isoformat'):  
                         friend[key] = value.isoformat()
             
             return True, "Amigos recuperados com sucesso", friends
@@ -36,10 +35,9 @@ class FriendsHandler:
                          (user_id, user_id, user_id, user_id, user_id))
             requests = cursor.fetchall()
             
-            # ⬇️ CONVERTE datetime para string ISO format
             for request in requests:
                 for key, value in request.items():
-                    if hasattr(value, 'isoformat'):  # Verifica se é datetime
+                    if hasattr(value, 'isoformat'): 
                         request[key] = value.isoformat()
             
             return True, "Solicitações recuperadas", requests
@@ -55,7 +53,6 @@ class FriendsHandler:
             connection = Database.get_connection()
             cursor = connection.cursor(dictionary=True)
             
-            # Primeiro, busca o ID do amigo pelo username
             cursor.execute("SELECT id, username FROM users WHERE username = %s", (friend_username,))
             friend = cursor.fetchone()
             
@@ -68,7 +65,6 @@ class FriendsHandler:
             if user_id == friend_id:
                 return False, "Você não pode adicionar a si mesmo", None
             
-            # Verifica se já existe uma solicitação (usando sender_id e receiver_id)
             cursor.execute(Queries.CHECK_FRIENDSHIP, 
                         (user_id, friend_id, friend_id, user_id))
             existing = cursor.fetchone()
@@ -80,10 +76,8 @@ class FriendsHandler:
                 elif status == 'pending':
                     return False, "Solicitação já enviada", None
                 elif status == 'rejected':
-                    # Permite reenviar solicitação rejeitada
                     pass
             
-            # Adiciona solicitação de amizade (usando sender_id e receiver_id)
             cursor.execute(Queries.ADD_FRIEND_REQUEST, (user_id, friend_id))
             connection.commit()
             
