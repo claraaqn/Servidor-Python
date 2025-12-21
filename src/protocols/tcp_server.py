@@ -149,9 +149,6 @@ class TCPClientHandler:
             elif action == 'cleanup_delivered_messages':
                 return self.handle_cleanup_delivered_messages(self, data)
             
-            elif action == 'mark_conversation_delivered':
-                return self.handle_mark_conversation_delivered(data)
-            
             elif action == 'get_contacts':
                 return self.handle_get_contacts(data)
 
@@ -568,14 +565,17 @@ class TCPClientHandler:
         if not public_key_sender:
             return create_response(False, "Chave pública Diffie-Hellman é obrigatória")
         
-        success, message = MessageHandler.send_friend_request(
+        success, message, receiver_id = MessageHandler.send_friend_request(
             user_id, receiver_username, public_key_sender)
-
-        return {
-            'action': 'send_friend_request_response',
+        
+        informarion = {
+            'action': 'pedding_request',
             'success': success,
             'message': message
         }
+
+        self.send_to_user(receiver_id, informarion)
+        return create_response(success,"Solicitação de amizade enviada", message, "send_friend_request_response")
 
     def handle_get_friend_requests(self, user_id):
         """Handle getting friend requests"""
