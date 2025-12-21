@@ -88,7 +88,7 @@ class HandshakeHandler:
             return response_data
             
         except Exception as e:
-            logger.error(f"❌ Erro detalhado no handshake: {e}")
+            logger.error(f"Erro detalhado no handshake: {e}")
             import traceback
             traceback.print_exc()
             

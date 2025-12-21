@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-from datetime import datetime as dt, time
+from datetime import datetime
 import socket
 import threading
 import json
@@ -231,7 +231,7 @@ class TCPClientHandler:
             decrypted_json = crypto_service.decrypt_message(self.session_id, encrypted_payload)
             decrypted_data = json.loads(decrypted_json)
             
-            print(f"🔓 Mensagem descriptografada: {decrypted_data.get('action')}")
+            logger.info(f"Mensagem descriptografada: {decrypted_data.get('action')}")
             
             # Processa a mensagem descriptografada
             return self.process_decrypted_message(decrypted_data)
@@ -263,8 +263,14 @@ class TCPClientHandler:
             self.handle_typing_indicator(decrypted_data, user_id, username, is_typing)
             return create_response(True, "Indicador de digitação enviado")
         
-        # Adicione outras ações que devem ser criptografadas
-        
+        elif action == 'handshake_init':
+            logger.info("RENOVAÇÃO DE CHAVES DETECTADA (Handshake Tunelado)")            
+            response = self.handshake_handler.handle_handshake_init(decrypted_data)
+            
+            if response.get('success'):
+                self.session_id = response['data']['session_id']
+                
+            return response                
         else:
             return create_response(False, f"Ação criptografada '{action}' não reconhecida")
 
@@ -356,7 +362,7 @@ class TCPClientHandler:
         self.authenticated_user = {
             'user_id': user_id,
             'username': username,
-            'authenticated_at': datetime.datetime.now()
+            'authenticated_at': datetime.now()
         }
         self.user_id = user_id
         self.username = username
@@ -477,7 +483,7 @@ class TCPClientHandler:
                 
                 connection = Database.get_connection()
                 cursor = connection.cursor()
-                cursor.execute(Queries.UPDATE_USER_STATUS, (False, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.user_id))
+                cursor.execute(Queries.UPDATE_USER_STATUS, (False, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.user_id))
                 connection.commit()
             except Exception as e:
                 logger.error(f"Erro ao atualizar status: {e}")
@@ -583,9 +589,7 @@ class TCPClientHandler:
             message_json = json.dumps(message)
             full_message = message_json + '\n'
             target_client.client_socket.send(full_message.encode('utf-8'))
-            
-            
-            print(f"Mensagem enviada para {user_id}: {message.get('action', 'no-action')}")
+                        
             return True
             
         except Exception as e:
@@ -683,7 +687,7 @@ class TCPClientHandler:
         local_id = data.get('local_id')
         id_friendship = data.get("id_friendship")
         
-        logger.info(f"📨 Mensagem de {self.username} para {receiver_username}")
+        logger.info(f"Mensagem de {self.username} para {receiver_username}")
         
         if not receiver_username or not content:
             return create_response(False, "Dados incompletos")
@@ -694,12 +698,11 @@ class TCPClientHandler:
         if receiver_id:
             is_receiver_online = receiver_id in self.clients_dict
         
-        if is_receiver_online:
-            logger.info(f"✅ Destinatário online - entregando em tempo real SEM banco")
-            
+        if is_receiver_online:            
             success = self.deliver_realtime_message(data, self.user_id, self.username, receiver_id)
             
             if success:
+                import time
                 return {
                     "action": "send_message_response",
                     "success": True,
@@ -712,9 +715,8 @@ class TCPClientHandler:
                     }
                 }
             else:
-                logger.warning("⚠️ Falha na entrega real-time, salvando no banco...")
+                logger.warning("Falha na entrega real-time, salvando no banco...")
         
-        logger.info(f"💾 Salvando mensagem no banco")
         success, message, message_id = MessageHandler.send_message(
             self.user_id, receiver_username, content, id_friendship
         )
@@ -748,7 +750,7 @@ class TCPClientHandler:
                 'receiver_id': receiver_id,
                 'receiver_username': data.get('receiver_username'),
                 'content': data.get('content'),
-                'timestamp': datetime.datetime.now().isoformat(),
+                'timestamp': datetime.now().isoformat(),
                 'is_delivered': True,
                 'message_type': 'real_time',
                 'id_friendship': data.get("id_friendship")
@@ -769,9 +771,7 @@ class TCPClientHandler:
 
         try:
             pending_messages = MessageHandler.get_undelivered_messages(self.user_id)
-            
-            logger.info(f"📨 Encontradas {len(pending_messages)} mensagens pendentes para {self.username}")
-            
+                        
             return {
                 "action": "get_pending_messages_response",
                 "success": True,
@@ -918,7 +918,7 @@ class TCPClientHandler:
                 'user_id': user_id,
                 'username': username,
                 'is_typing': is_typing,
-                'timestamp': datetime.datetime.utcnow().isoformat()
+                'timestamp': datetime.utcnow().isoformat()
             }
 
             logger.debug(f"WS connections: {list(websocket_connections.keys())}")

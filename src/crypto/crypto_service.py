@@ -20,7 +20,6 @@ class ServerCryptoService:
             'hmac_key': hmac_key
         }
         
-        logger.info(f"🔄 Chaves definidas para sessão {session_id}:")
         logger.info(f"   ENC: {base64.b64encode(encryption_key).decode()}")
         logger.info(f"   HMAC: {base64.b64encode(hmac_key).decode()}")
         
