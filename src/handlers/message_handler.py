@@ -180,7 +180,7 @@ class MessageHandler:
             )
             
             connection.commit()
-            return True, "Solicitação de amizade enviada com sucesso"
+            return True, "Solicitação de amizade enviada com sucesso", receiver_id
             
         except mysql.connector.Error as e:
             error_message = f"Erro ao enviar solicitação de amizade: {e}"
