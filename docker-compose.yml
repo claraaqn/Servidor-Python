@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0 
+    container_name: chat_db
+    restart: always
+    environment:
+    # verificar se vou deixar os dados do .env ou criar mock
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./script_inicial.sql:/docker-entrypoint-initdb.d/script_inicial.sql
+      - db_data:/var/lib/mysql
+
+  app:
+    build: .
+    container_name: chat_server
+    restart: always
+    depends_on:
+      - db
+    env_file:
+      - .env
+    ports:
+      - "8081:8081"
+      - "8080:8080" 
+    environment:
+      - DB_HOST=db 
+
+volumes:
+  db_data:
