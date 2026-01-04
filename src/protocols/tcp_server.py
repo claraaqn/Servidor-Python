@@ -37,8 +37,6 @@ class TCPClientHandler:
 #? processamento incial
     def handle_client(self):
         buffer = ""
-        user_id = None
-        username = None
         try:
             logger.info(f"Nova conexão TCP de {self.address}")
 
@@ -94,6 +92,10 @@ class TCPClientHandler:
         """
         try:
             data = json.loads(raw_message)
+            
+            if self.encryption_enabled and self._is_encrypted_message(data):
+                return self._handle_encrypted_message(data)
+        
             action = data.get('action')
             
             effective_user_id = self.user_id if self.user_id else user_id_arg
@@ -525,6 +527,7 @@ class TCPClientHandler:
         if not self.authenticated:
             return create_response(False, "Usuário não autenticado")
         
+        logger.info(f"Executando logout do usuário {self.user_id}")
         success, message = AuthHandler.logout_user(self.user_id)
         if success:
             self.authenticated = False
@@ -536,6 +539,9 @@ class TCPClientHandler:
         """Limpeza segura"""
         try:
             if self.user_id and self.clients_dict.get(self.user_id) == self:
+                logger.info(f"Usuário: {self.user_id} ficando offline ás {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                #! FAZER REFATORAMENTO  
                 from src.database.database import Database
                 from src.database.queries import Queries
                 
@@ -543,6 +549,7 @@ class TCPClientHandler:
                 cursor = connection.cursor()
                 cursor.execute(Queries.UPDATE_USER_STATUS, (False, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.user_id))
                 connection.commit()
+                #!CRIAR UMA UMA FUNÇÃO SOMENTE PARA FAZER O UPDATE DE STATUS 
                 
                 if self.user_id in tcp_connections:
                     del tcp_connections[self.user_id]
