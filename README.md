@@ -1,5 +1,3 @@
-Com base nos requisitos dos PDFs das disciplinas  e na estrutura do seu projeto, preparei um template de `README.md` profissional e completo para o seu repositório do **Ser# Chat Server - Segurança da Informação (E2EE)
-
 Este projeto consiste em um **Servidor de Chat Seguro** desenvolvido para a disciplina de Segurança da Informação do curso de Engenharia da Computação (UFRPE/UABJ). O sistema implementa um protocolo de comunicação robusto com criptografia ponta-a-ponta (E2EE) entre clientes, garantindo confidencialidade, integridade e autenticidade.
 
 ## Contexto Acadêmico
