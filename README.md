@@ -4,52 +4,33 @@ Este projeto consiste em um **Servidor de Chat Seguro** desenvolvido para a disc
 
 ## Contexto Acadêmico
 
-* 
-**Instituição:** Universidade Federal Rural de Pernambuco (UFRPE) 
+* **Instituição:** Universidade Federal Rural de Pernambuco (UFRPE) 
 
+* **Unidade:** Unidade Acadêmica de Belo Jardim (UABJ) 
 
-* 
-**Unidade:** Unidade Acadêmica de Belo Jardim (UABJ) 
-
-
-* 
-**Disciplina:** Segurança da Informação 
-
+* **Disciplina:** Segurança da Informação 
 
 * **Professor:** [Ygor Amaral](https://github.com/ygoramaral)
 
 ## Funcionalidades Principal
 
-* 
-**Arquitetura Multithread:** Suporte a múltiplos clientes simultâneos via sockets TCP.
+* **Arquitetura Multithread:** Suporte a múltiplos clientes simultâneos via sockets TCP.
 
+* **Registro e Autenticação Segura:** Hashing de senhas utilizando **Argon2** com salts individuais por usuário.
 
-* 
-**Registro e Autenticação Segura:** Hashing de senhas utilizando **Argon2** com salts individuais por usuário.
+* **Criptografia de Canal:** Toda a comunicação entre Cliente e Servidor é cifrada com **AES-256** e autenticada via **HMAC-SHA256**.
 
+* **Handshake Criptográfico:** Negociação de chaves de sessão efêmeras via **Diffie-Hellman (DHE)** e derivação por **HKDF**.
 
-* 
-**Criptografia de Canal:** Toda a comunicação entre Cliente e Servidor é cifrada com **AES-256** e autenticada via **HMAC-SHA256**.
+* **Roteamento E2EE:** O servidor roteia mensagens criptografadas entre usuários sem ter acesso ao conteúdo original (Segredo de Encaminhamento).
 
-
-* 
-**Handshake Criptográfico:** Negociação de chaves de sessão efêmeras via **Diffie-Hellman (DHE)** e derivação por **HKDF**.
-
-
-* 
-**Roteamento E2EE:** O servidor roteia mensagens criptografadas entre usuários sem ter acesso ao conteúdo original (Segredo de Encaminhamento).
-
-
-* 
-**Persistência de Dados:** Armazenamento de usuários e mensagens offline em banco de dados MySQL.
-
+* **Persistência de Dados:** Armazenamento de usuários e mensagens offline em banco de dados MySQL.
 
 
 ## Tecnologias Utilizadas
 
 * **Linguagem:** Python 3.10+
-* 
-**Banco de Dados:** MySQL 8.0 
+* **Banco de Dados:** MySQL 8.0 
 
 
 * **Containerização:** Docker & Docker Compose
@@ -95,24 +76,17 @@ O servidor estará pronto para receber conexões quando o log exibir:
 
 O projeto segue rigorosamente os requisitos de segurança definidos:
 
-* 
-**Confidencialidade:** AES-256 em modo CBC/GCM.
+* **Confidencialidade:** AES-256 em modo CBC/GCM.
 
+* **Integridade:** HMAC-SHA256 para detectar qualquer alteração nos pacotes.
 
-* 
-**Integridade:** HMAC-SHA256 para detectar qualquer alteração nos pacotes.
+* **Autenticação Mútua:** Uso de assinaturas digitais (RSA-PSS ou Ed25519) após o handshake inicial.
 
-
-* 
-**Autenticação Mútua:** Uso de assinaturas digitais (RSA-PSS ou Ed25519) após o handshake inicial.
-
-
-* 
-**Efemeridade:** Chaves de sessão expiram por tempo (60 min) ou volume de mensagens (100 msgs).
+* **Efemeridade:** Chaves de sessão expiram por tempo (60 min) ou volume de mensagens (100 msgs).
 
 
 
 ---
 
-**Desenvolvido por:** [Seu Nome Aqui]
+**Desenvolvido por:** [Clara Aquino](https://github.com/claraaqn)
 *Estudante de Engenharia da Computação - UFRPE*
