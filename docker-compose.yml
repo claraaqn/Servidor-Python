@@ -6,7 +6,6 @@ services:
     container_name: chat_db
     restart: always
     environment:
-    # verificar se vou deixar os dados do .env ou criar mock
       MYSQL_DATABASE: ${DB_NAME}
       MYSQL_USER: ${DB_USER}
       MYSQL_PASSWORD: ${DB_PASSWORD}

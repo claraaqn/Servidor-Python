@@ -87,120 +87,41 @@ class TCPClientHandler:
             self.cleanup()
 
     def process_message(self, raw_message, user_id_arg, username_arg):
-        """
-        Processa mensagens recebidas do cliente TCP.
-        """
         try:
             data = json.loads(raw_message)
             
-            if self.encryption_enabled and self._is_encrypted_message(data):
+            if self._is_encrypted_message(data):
                 return self._handle_encrypted_message(data)
         
             action = data.get('action')
-            
-            effective_user_id = self.user_id if self.user_id else user_id_arg
-            effective_username = self.username if self.username else username_arg
-            
-            if self.encryption_enabled and self._is_encrypted_message(data):
-                return self._handle_encrypted_message(data)
-            
+            if self.encryption_enabled:
+                allowed_plain_actions = ['handshake_init', 'logout']
+                if action not in allowed_plain_actions:
+                    logger.warning(f"Ação bloqueada: '{action}' enviada sem criptografia após handshake.")
+                    return create_response(False, "Criptografia obrigatória para esta ação.")
+
             if action == 'register':
                 return self.handle_register(data)
-
-            elif action == 'login':
-                return self.handle_login(data)
-            
-            elif action == 'login_new_device':
-                return self.handle_login_new_device(data)
-            
             elif action == 'get_user_salt':
                 return self.handle_get_user_salt(data)
-
-            elif action == 'logout':
-                return self.handle_logout(data)
-            
+            elif action == 'initiate_challenge':
+                return self.handle_initiate_challenge(data)
+            elif action == 'verify_challenge':
+                return self.handle_verify_challenge(data)
             elif action == 'handshake_init':
                 response = self.handshake_handler.handle_handshake_init(data)
                 if response.get('success'):
                     self.session_id = response['data']['session_id']
                     self.encryption_enabled = True
-                    print(f"Criptografia ativada para sessão: {self.session_id}")
+                    logger.info(f"Criptografia ativada: {self.session_id}")
                 return response
             
-            elif action == 'send_message':
-                return self.handle_send_message(data)
-        
-            elif action == 'initiate_challenge':
-                return self.handle_initiate_challenge(data)
-
-            elif action == 'verify_challenge':
-                return self.handle_verify_challenge(data)
-            
-            elif action == 'get_conversation_history':
-                return self.handle_get_conversation_history(data)
-
-            elif action == 'check_user_online_status':
-                return self.handle_check_user_online_status(data)
-            
-            elif action == 'get_pending_messages':
-                return self.handle_get_pending_messages(data)
-            
-            elif action == 'confirm_message_delivery':
-                return self.handle_confirm_message_delivery(data)
-            
-            elif action == 'cleanup_delivered_messages':
-                return self.handle_cleanup_delivered_messages(self, data)
-            
-            elif action == 'get_contacts':
-                return self.handle_get_contacts(data)
-
-            elif action == 'send_friend_request':
-                return self.handle_send_friend_request(data, effective_user_id)
-
-            elif action == 'get_friend_requests':
-                return self.handle_get_friend_requests(effective_user_id)
-
-            elif action == 'respond_friend_request':
-                return self.handle_respond_friend_request(data, effective_user_id)
-            
-            elif action == "handshake_complete":
-                return self.handle_handshake_complete(data, effective_user_id)
-
-            elif action == 'get_friends_list':
-                return self.handle_get_friends_list(effective_user_id)
-
-            elif action in ['typing_start', 'typing_stop']:
-                is_typing = action == 'typing_start'
-                self.handle_typing_indicator(data, effective_user_id, effective_username, is_typing)
-                return create_response(True, "Indicador de digitação enviado")
-            
-            auth_actions = [
-                "auth_challenge", 
-                "auth_response_and_challenge", 
-                "auth_final_verification",
-                "auth_complete"
-            ]
-
-            if action in auth_actions:
-                target_id = data.get("target_id")
-                if target_id:
-                    data['sender_id'] = effective_user_id 
-                    sent = self.send_to_user(target_id, data)
-                    
-                    if sent:
-                        return create_response(True, "Sinal enviado ao destinatário")
-                    else:
-                        return create_response(False, "Usuário destino offline ou não encontrado")
-                
-                return create_response(False, "Target ID não fornecido")
-
-            else:
-                return create_response(False, f"Ação '{action}' não reconhecida")
+            return create_response(False, "Ação não permitida em texto puro.")
 
         except json.JSONDecodeError:
             return create_response(False, "JSON inválido")
         except Exception as e:
-            logger.error(f"Erro ao processar mensagem: {e}")
+            logger.error(f"Erro no process_message: {e}")
             return create_response(False, f"Erro interno: {str(e)}")
 
 #! criptografia
@@ -233,37 +154,71 @@ class TCPClientHandler:
             return create_response(False, f"Erro de criptografia: {str(e)}")
     
     def process_decrypted_message(self, decrypted_data):
-        """Processa mensagem já descriptografada"""
         action = decrypted_data.get('action')
-        user_id = self.user_id
-        username = self.username
+        u_id = self.user_id 
+        u_name = self.username
+        
+        if action == 'login':
+            return self.handle_login(decrypted_data)
+        elif action == 'initiate_challenge':
+            return self.handle_initiate_challenge(decrypted_data)
+        elif action == 'verify_challenge':
+            return self.handle_verify_challenge(decrypted_data)
+        elif action == 'login_new_device':
+            return self.handle_login_new_device(decrypted_data)
         
         if action == 'send_message':
             return self.handle_send_message(decrypted_data)
+        elif action == 'get_pending_messages':
+            return self.handle_get_pending_messages(decrypted_data)
+        elif action == 'confirm_message_delivery':
+            return self.handle_confirm_message_delivery(decrypted_data)
+        elif action == 'cleanup_delivered_messages':
+            return self.handle_cleanup_delivered_messages(self, decrypted_data)
         
+        elif action == 'get_contacts':
+                return self.handle_get_contacts(decrypted_data)
+        elif action == 'send_friend_request':
+                return self.handle_send_friend_request(decrypted_data, u_id)
+        elif action == 'get_friends_list':
+            return self.handle_get_friends_list(u_id)
+        elif action == 'get_friend_requests':
+            return self.handle_get_friend_requests(u_id)
+        elif action == 'respond_friend_request':
+            return self.handle_respond_friend_request(decrypted_data, u_id)
         elif action == 'get_conversation_history':
             return self.handle_get_conversation_history(decrypted_data)
+        elif action == 'check_user_online_status':
+            return self.handle_check_user_online_status(decrypted_data)
+        elif action in ['typing_start', 'typing_stop']:
+            is_typing = action == 'typing_start'
+            self.handle_typing_indicator(decrypted_data, u_id, u_name, is_typing)
+            return create_response(True, "OK")
+        elif action == 'handshake_complete':
+            return self.handle_handshake_complete(decrypted_data, u_id)
         
-        elif action == 'typing_start':
-            is_typing = True
-            self.handle_typing_indicator(decrypted_data, user_id, username, is_typing)
-            return create_response(True, "Indicador de digitação enviado")
-        
-        elif action == 'typing_stop':
-            is_typing = False
-            self.handle_typing_indicator(decrypted_data, user_id, username, is_typing)
-            return create_response(True, "Indicador de digitação enviado")
-        
-        elif action == 'handshake_init':
-            logger.info("RENOVAÇÃO DE CHAVES DETECTADA (Handshake Tunelado)")            
-            response = self.handshake_handler.handle_handshake_init(decrypted_data)
-            
-            if response.get('success'):
-                self.session_id = response['data']['session_id']
+        auth_actions = [
+                "auth_challenge", 
+                "auth_response_and_challenge", 
+                "auth_final_verification",
+                "auth_complete"
+            ]
+
+        if action in auth_actions:
+            target_id = decrypted_data.get("target_id")
+            if target_id:
+                decrypted_data['sender_id'] = u_id 
+                sent = self.send_to_user(target_id, decrypted_data)
+                    
+                if sent:
+                    return create_response(True, "Sinal enviado ao destinatário")
+                else:
+                    return create_response(False, "Usuário destino offline ou não encontrado")
                 
-            return response                
-        else:
-            return create_response(False, f"Ação criptografada '{action}' não reconhecida")
+            return create_response(False, "Target ID não fornecido")
+        
+        logger.warning(f"Ação segura '{action}' não reconhecida.")
+        return create_response(False, f"Ação segura '{action}' não reconhecida.")
 
     def handle_initiate_challenge(self, data):
         """Inicia desafio de autenticação"""
