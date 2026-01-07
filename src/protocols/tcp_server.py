@@ -166,6 +166,8 @@ class TCPClientHandler:
             return self.handle_verify_challenge(decrypted_data)
         elif action == 'login_new_device':
             return self.handle_login_new_device(decrypted_data)
+        elif action == 'logout':
+            return self.handle_logout()
         
         if action == 'send_message':
             return self.handle_send_message(decrypted_data)
@@ -477,7 +479,7 @@ class TCPClientHandler:
         
         return response_data
     
-    def handle_logout(self, data):
+    def handle_logout(self):
         """Handle user logout"""
         if not self.authenticated:
             return create_response(False, "Usuário não autenticado")
