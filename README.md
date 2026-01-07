@@ -1,36 +1,24 @@
 Este projeto consiste em um **Servidor de Chat Seguro** desenvolvido para a disciplina de Segurança da Informação do curso de Engenharia da Computação (UFRPE/UABJ). O sistema implementa um protocolo de comunicação robusto com criptografia ponta-a-ponta (E2EE) entre clientes, garantindo confidencialidade, integridade e autenticidade.
 
 ## Contexto Acadêmico
-
 * **Instituição:** Universidade Federal Rural de Pernambuco (UFRPE) 
-
 * **Unidade:** Unidade Acadêmica de Belo Jardim (UABJ) 
-
 * **Disciplina:** Segurança da Informação 
-
 * **Professor:** [Ygor Amaral](https://github.com/ygoramaral)
 
 ## Funcionalidades Principal
 
 * **Arquitetura Multithread:** Suporte a múltiplos clientes simultâneos via sockets TCP.
-
 * **Registro e Autenticação Segura:** Hashing de senhas utilizando **Argon2** com salts individuais por usuário.
-
 * **Criptografia de Canal:** Toda a comunicação entre Cliente e Servidor é cifrada com **AES-256** e autenticada via **HMAC-SHA256**.
-
 * **Handshake Criptográfico:** Negociação de chaves de sessão efêmeras via **Diffie-Hellman (DHE)** e derivação por **HKDF**.
-
 * **Roteamento E2EE:** O servidor roteia mensagens criptografadas entre usuários sem ter acesso ao conteúdo original (Segredo de Encaminhamento).
-
 * **Persistência de Dados:** Armazenamento de usuários e mensagens offline em banco de dados MySQL.
 
 
 ## Tecnologias Utilizadas
-
 * **Linguagem:** Python 3.10+
 * **Banco de Dados:** MySQL 8.0 
-
-
 * **Containerização:** Docker & Docker Compose
 * **Criptografia:** Bibliotecas `cryptography` e `argon2-cffi`
 
@@ -44,7 +32,7 @@ Siga os passos abaixo para subir o ambiente completo (Servidor + Banco de Dados)
 
 1. **Clone este repositório:**
 ```bash
-git clone <link-deste-repositorio>
+git clone https://github.com/claraaqn/Servidor-Python
 cd servidor
 
 ```
@@ -68,18 +56,15 @@ docker-compose up --build
 
 4. **Verificação:**
 O servidor estará pronto para receber conexões quando o log exibir:
-` Servidor pronto para conexões!` nas portas `8081` (TCP) e `8080` (WebSocket).
+` Servidor pronto para conexões!` nas portas `8081` (TCP).
 
 ## Arquitetura de Segurança
 
 O projeto segue rigorosamente os requisitos de segurança definidos:
 
 * **Confidencialidade:** AES-256 em modo CBC/GCM.
-
 * **Integridade:** HMAC-SHA256 para detectar qualquer alteração nos pacotes.
-
 * **Autenticação Mútua:** Uso de assinaturas digitais (RSA-PSS ou Ed25519) após o handshake inicial.
-
 * **Efemeridade:** Chaves de sessão expiram por tempo (60 min) ou volume de mensagens (100 msgs).
 
 
